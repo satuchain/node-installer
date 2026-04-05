@@ -101,10 +101,10 @@ tail -f /opt/satuchain-validator/logs/monitor.log
 
 ## Node Software
 
-SatuChain validator nodes run on **APoS** (Autonomous Proof-of-Stake), SatuChain's proprietary consensus built and maintained by the SatuChain team. The node image is hosted on the SatuChain GitHub Container Registry and verified via checksum during installation.
+SatuChain validator nodes run on **APoS** (Adaptive Proof-of-Stake), SatuChain's proprietary consensus built and maintained by the SatuChain team. The node image is hosted on the SatuChain GitHub Container Registry and verified via checksum during installation.
 
 - Node image: `ghcr.io/satuchain/node`
-- Consensus: APoS (Autonomous Proof-of-Stake)
+- Consensus: APoS (Adaptive Proof-of-Stake)
 - Engine: EVM-compatible (Chain ID: 10111945)
 
 ## Links
