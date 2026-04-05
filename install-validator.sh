@@ -35,11 +35,11 @@ BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
 
 # Minimum requirements — HARD STOP if not met
-# Minimum: 2 vCPU / 2 GB RAM / 50 GB Disk
+# Minimum: 2 vCPU / 2 GB RAM / 15 GB Disk
 # Recommended: 4 vCPU / 4 GB RAM / 100 GB Disk
 REQ_CPU=2
 REQ_RAM_GB=2
-REQ_DISK_GB=50
+REQ_DISK_GB=15
 
 # ── State helpers ────────────────────────────────────────────
 save_state() { echo "$1=$2" >> "$STATE_FILE"; }
@@ -314,7 +314,7 @@ check_requirements() {
     echo -e "  ${RED}║  ✗  DISK CHECK FAILED                                ║${NC}"
     echo -e "  ${RED}╚══════════════════════════════════════════════════════╝${NC}"
     echo -e "  Free disk  : ${RED}${DISK_FREE} GB${NC} (need ${REQ_DISK_GB} GB minimum)"
-    echo -e "  Recommended: ${GREEN}100 GB SSD${NC} — chain data grows over time"
+    echo -e "  Recommended: ${GREEN}100 GB SSD${NC} — chain data grows ~1-2 GB/month"
     echo ""
     echo -e "  ${YELLOW}→ Free up disk space or upgrade to a larger volume.${NC}"
     echo -e "  ${YELLOW}  Check usage: du -sh /* 2>/dev/null | sort -rh | head${NC}"

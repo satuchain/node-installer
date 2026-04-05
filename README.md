@@ -20,7 +20,7 @@ Before running the installer, make sure you have:
 | OS | Ubuntu 20.04 / 22.04 / Debian 11+ | Ubuntu 22.04 LTS |
 | CPU | 2 vCPU (x86_64) | 4 vCPU |
 | RAM | 2 GB (+ 2 GB swap) | 4 GB |
-| Disk | 50 GB SSD | 100 GB SSD |
+| Disk | 15 GB free (25 GB+ total) | 100 GB SSD |
 | Network | 10 Mbps, Port 30303 TCP/UDP open | 100 Mbps |
 | Uptime | > 90% | > 99% |
 
