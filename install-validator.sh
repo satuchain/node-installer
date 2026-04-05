@@ -534,8 +534,15 @@ install_docker() {
   info "$(t docker_install)"
 
   # Install via official Docker script (supports Ubuntu, Debian, CentOS, Fedora)
-  curl -fsSL https://get.docker.com | sh 2>/dev/null \
-    || die "Docker installation failed. Try manually: https://docs.docker.com/engine/install/"
+  if ! curl -fsSL https://get.docker.com | sh; then
+    echo ""
+    echo -e "${RED}═══════════════════════════════════════════════${NC}"
+    echo -e "${RED}  Docker installation failed.${NC}"
+    echo -e "${RED}  Try manually:${NC}"
+    echo -e "${RED}  apt-get update && apt-get install -y docker.io${NC}"
+    echo -e "${RED}═══════════════════════════════════════════════${NC}"
+    die "Docker installation failed"
+  fi
 
   # Enable + start Docker service
   systemctl enable docker --now 2>/dev/null || service docker start 2>/dev/null || true
