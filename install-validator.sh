@@ -218,7 +218,7 @@ print_banner() {
   echo "  ███████║██║  ██║   ██║   ╚██████╔╝╚██████╗██║  ██║██║  ██║██║██║ ╚████║"
   echo "  ╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝"
   echo -e "${NC}"
-  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v2.1.4${NC}"
+  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v2.1.5${NC}"
   echo -e "  Chain ID: ${CYAN}$CHAIN_ID${NC}  •  APoS Consensus  •  Docker-based"
   echo ""
 }
@@ -662,11 +662,17 @@ setup_account() {
           echo -e "${RED}  ✗ Format salah. Harus 64 karakter hex tanpa 0x. (64 hex chars, no 0x)${NC}"
           echo -e "${BOLD}$(t account_pk)${NC}"
         done
-        echo -e "${BOLD}$(t account_pw)${NC}"
-        read -r -s KEYSTORE_PASSWORD; echo ""
-        echo -e "${BOLD}$(t account_pw2)${NC}"
-        read -r -s KP2; echo ""
-        [[ "$KEYSTORE_PASSWORD" == "$KP2" ]] || die "$(t account_pw_err)"
+        while true; do
+          echo -e "${BOLD}$(t account_pw)${NC}"
+          read -r -s KEYSTORE_PASSWORD; echo ""
+          echo -e "${BOLD}$(t account_pw2)${NC}"
+          read -r -s KP2; echo ""
+          if [[ "$KEYSTORE_PASSWORD" == "$KP2" ]]; then
+            break
+          fi
+          echo -e "${RED}  ✗ $(t account_pw_err) — coba lagi / try again${NC}"
+          echo ""
+        done
 
         # Use Docker to import — secure tmpdir (mode 700, not world-readable /tmp)
         SECURE_TMP=$(mktemp -d)
@@ -777,6 +783,18 @@ $([ "$mode" = "validator" ] && echo "      - --mine
       - --log.maxbackups=7
 COMPOSE
   }
+
+  # Pre-pull disk check — BSC image is ~800 MB, need at least 2 GB free
+  PULL_DISK=$(df --output=avail -BG / 2>/dev/null | tail -1 | tr -d 'G ')
+  if [[ "${PULL_DISK:-0}" -lt 2 ]]; then
+    die "Not enough disk space to pull Docker image (${PULL_DISK} GB free, need at least 2 GB). Free up space and re-run."
+  fi
+  # Check available memory (RAM + swap) before pull
+  PULL_MEM=$(( $(grep MemAvailable /proc/meminfo | awk '{print $2}') + $(grep SwapFree /proc/meminfo | awk '{print $2}') ))
+  if [[ "${PULL_MEM:-0}" -lt 512000 ]]; then
+    warn "Low memory available ($(( PULL_MEM / 1024 )) MB free). Attempting to free caches..."
+    sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+  fi
 
   info "$(t compose_pull)"
   docker pull "$BSC_IMAGE"
