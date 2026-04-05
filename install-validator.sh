@@ -228,37 +228,120 @@ check_requirements() {
 
   # CPU
   CPU=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo)
-  [[ $CPU -ge $REQ_CPU ]] || die "$(t req_cpu $CPU)"
+  if [[ $CPU -lt $REQ_CPU ]]; then
+    echo ""
+    echo -e "  ${RED}╔══════════════════════════════════════════════════════╗${NC}"
+    echo -e "  ${RED}║  ✗  CPU CHECK FAILED                                 ║${NC}"
+    echo -e "  ${RED}╚══════════════════════════════════════════════════════╝${NC}"
+    echo -e "  Detected : ${RED}${CPU} vCPU${NC}"
+    echo -e "  Required : ${GREEN}${REQ_CPU} vCPU minimum${NC}"
+    echo -e "  Recommended : ${GREEN}4 vCPU${NC} for stable long-term operation"
+    echo ""
+    echo -e "  ${YELLOW}→ Solution: Upgrade your VPS to at least 2 vCPU${NC}"
+    echo -e "  ${YELLOW}  Example: DigitalOcean Basic 2vCPU (\$18/mo)${NC}"
+    echo -e "  ${YELLOW}           Hetzner CPX11 2vCPU (€4.5/mo)${NC}"
+    echo ""
+    die "CPU insufficient: ${CPU} vCPU < ${REQ_CPU} vCPU required"
+  fi
 
-  # RAM
+  # RAM — check physical + swap combined
   RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
   RAM_GB=$(( RAM_KB / 1024 / 1024 ))
-  [[ $RAM_GB -ge $REQ_RAM_GB ]] || die "$(t req_ram $RAM_GB)"
+  SWAP_KB=$(grep SwapTotal /proc/meminfo | awk '{print $2}')
+  SWAP_GB=$(( SWAP_KB / 1024 / 1024 ))
+  TOTAL_MEM_GB=$(( RAM_GB + SWAP_GB ))
+
+  if [[ $RAM_GB -lt $REQ_RAM_GB ]]; then
+    echo ""
+    echo -e "  ${RED}╔══════════════════════════════════════════════════════╗${NC}"
+    echo -e "  ${RED}║  ✗  RAM CHECK FAILED                                 ║${NC}"
+    echo -e "  ${RED}╚══════════════════════════════════════════════════════╝${NC}"
+    echo -e "  Detected RAM  : ${RED}${RAM_GB} GB${NC} (need ${REQ_RAM_GB} GB minimum)"
+    echo -e "  Current Swap  : ${SWAP_GB} GB"
+    echo -e "  Total Memory  : ${TOTAL_MEM_GB} GB"
+    echo ""
+    if [[ $TOTAL_MEM_GB -ge $REQ_RAM_GB ]]; then
+      echo -e "  ${GREEN}✓ Swap already covers minimum — continuing with warning${NC}"
+    else
+      # Offer to auto-create swap
+      echo -e "  ${YELLOW}→ Your server has only ${RAM_GB} GB RAM.${NC}"
+      echo -e "  ${YELLOW}  A swap file can compensate. Auto-create 2 GB swap?${NC}"
+      echo ""
+      read -r -p "  Create 2 GB swap file automatically? [Y/n]: " MKSWAP 2>/dev/null || MKSWAP="Y"
+      if [[ "${MKSWAP,,}" != "n" ]]; then
+        echo ""
+        info "Creating 2 GB swap file at /swapfile..."
+        if [[ -f /swapfile ]]; then
+          info "Swap file already exists — reusing."
+          swapon /swapfile 2>/dev/null || true
+        else
+          fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+          chmod 600 /swapfile
+          mkswap /swapfile -q
+          swapon /swapfile
+          # Persist across reboots
+          grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        fi
+        SWAP_KB=$(grep SwapTotal /proc/meminfo | awk '{print $2}')
+        SWAP_GB=$(( SWAP_KB / 1024 / 1024 ))
+        TOTAL_MEM_GB=$(( RAM_GB + SWAP_GB ))
+        log "Swap created: ${SWAP_GB} GB — Total effective memory: ${TOTAL_MEM_GB} GB"
+        if [[ $TOTAL_MEM_GB -lt $REQ_RAM_GB ]]; then
+          die "Not enough memory even with swap (${TOTAL_MEM_GB} GB total). Please upgrade your server."
+        fi
+      else
+        echo ""
+        echo -e "  ${YELLOW}→ To fix manually, run:${NC}"
+        echo -e "     fallocate -l 2G /swapfile"
+        echo -e "     chmod 600 /swapfile"
+        echo -e "     mkswap /swapfile"
+        echo -e "     swapon /swapfile"
+        echo -e "     echo '/swapfile none swap sw 0 0' >> /etc/fstab"
+        echo ""
+        echo -e "  ${YELLOW}  Then re-run this installer.${NC}"
+        die "RAM insufficient: ${RAM_GB} GB < ${REQ_RAM_GB} GB required"
+      fi
+    fi
+    warn "Running on ${RAM_GB} GB RAM + ${SWAP_GB} GB swap. Monitor memory: free -h"
+  fi
 
   # Disk (check /opt or /)
   DISK_FREE=$(df -BG "${INSTALL_DIR%/*}" 2>/dev/null | awk 'NR==2{print $4}' | tr -d 'G' \
               || df -BG / | awk 'NR==2{print $4}' | tr -d 'G')
-  [[ ${DISK_FREE:-0} -ge $REQ_DISK_GB ]] || die "$(t req_disk $DISK_FREE)"
+  if [[ ${DISK_FREE:-0} -lt $REQ_DISK_GB ]]; then
+    echo ""
+    echo -e "  ${RED}╔══════════════════════════════════════════════════════╗${NC}"
+    echo -e "  ${RED}║  ✗  DISK CHECK FAILED                                ║${NC}"
+    echo -e "  ${RED}╚══════════════════════════════════════════════════════╝${NC}"
+    echo -e "  Free disk  : ${RED}${DISK_FREE} GB${NC} (need ${REQ_DISK_GB} GB minimum)"
+    echo -e "  Recommended: ${GREEN}100 GB SSD${NC} — chain data grows over time"
+    echo ""
+    echo -e "  ${YELLOW}→ Free up disk space or upgrade to a larger volume.${NC}"
+    echo -e "  ${YELLOW}  Check usage: du -sh /* 2>/dev/null | sort -rh | head${NC}"
+    echo ""
+    die "Disk insufficient: ${DISK_FREE} GB free < ${REQ_DISK_GB} GB required"
+  fi
 
-  log "$(t req_ok) — CPU: ${CPU}c | RAM: ${RAM_GB}GB | Disk free: ${DISK_FREE}GB"
+  log "$(t req_ok) — CPU: ${CPU}c | RAM: ${RAM_GB}GB + ${SWAP_GB}GB swap | Disk free: ${DISK_FREE}GB"
 
   # Warn if below recommended (not a hard stop)
   local warn_shown=0
   if [[ $CPU -lt 4 ]]; then
-    warn "CPU ${CPU} core(s) — recommended 4 vCPU for stability. Node will work but may lag under load."
+    warn "CPU ${CPU} vCPU — recommended 4 vCPU. Node will work but may lag under heavy load."
     warn_shown=1
   fi
   if [[ $RAM_GB -lt 4 ]]; then
-    warn "RAM ${RAM_GB} GB — recommended 4 GB. Enable swap: fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile"
+    warn "RAM ${RAM_GB} GB — recommended 4 GB for long-term stability."
     warn_shown=1
   fi
   if [[ ${DISK_FREE:-0} -lt 100 ]]; then
-    warn "Disk ${DISK_FREE} GB free — recommended 100 GB. Chain data grows over time."
+    warn "Disk ${DISK_FREE} GB free — recommended 100 GB. Monitor with: df -h"
     warn_shown=1
   fi
   if [[ $warn_shown -eq 1 ]]; then
     echo ""
-    echo -e "  ${YELLOW}Minimum requirements met. For best performance use: 4 vCPU / 4 GB RAM / 100 GB SSD${NC}"
+    echo -e "  ${YELLOW}▸ Minimum met. Best performance: 4 vCPU / 4 GB RAM / 100 GB SSD${NC}"
+    echo -e "  ${YELLOW}  Recommended VPS: Hetzner CPX21 €6/mo · DO 2GB \$18/mo · Contabo VPS S \$7/mo${NC}"
     echo ""
   fi
 }
