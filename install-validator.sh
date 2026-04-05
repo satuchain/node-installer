@@ -1,8 +1,9 @@
 #!/bin/bash
 # ============================================================
 # SatuChain Mainnet — Validator Node Installer
-# Version: 2.0.0 — Docker-based deployment
-# Usage : curl -fsSL https://raw.githubusercontent.com/satuchain/sdk/main/install-validator.sh | sudo bash
+# Version: 2.1.0 — Docker-based deployment
+# Usage : curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh | sudo bash
+# Min req: 2 vCPU / 2 GB RAM / 50 GB SSD  |  Rec: 4 vCPU / 4 GB RAM / 100 GB SSD
 # ============================================================
 
 set -euo pipefail
@@ -34,9 +35,11 @@ BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
 
 # Minimum requirements — HARD STOP if not met
-REQ_CPU=4
-REQ_RAM_GB=8
-REQ_DISK_GB=100
+# Minimum: 2 vCPU / 2 GB RAM / 50 GB Disk
+# Recommended: 4 vCPU / 4 GB RAM / 100 GB Disk
+REQ_CPU=2
+REQ_RAM_GB=2
+REQ_DISK_GB=50
 
 # ── State helpers ────────────────────────────────────────────
 save_state() { echo "$1=$2" >> "$STATE_FILE"; }
@@ -238,6 +241,26 @@ check_requirements() {
   [[ ${DISK_FREE:-0} -ge $REQ_DISK_GB ]] || die "$(t req_disk $DISK_FREE)"
 
   log "$(t req_ok) — CPU: ${CPU}c | RAM: ${RAM_GB}GB | Disk free: ${DISK_FREE}GB"
+
+  # Warn if below recommended (not a hard stop)
+  local warn_shown=0
+  if [[ $CPU -lt 4 ]]; then
+    warn "CPU ${CPU} core(s) — recommended 4 vCPU for stability. Node will work but may lag under load."
+    warn_shown=1
+  fi
+  if [[ $RAM_GB -lt 4 ]]; then
+    warn "RAM ${RAM_GB} GB — recommended 4 GB. Enable swap: fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile"
+    warn_shown=1
+  fi
+  if [[ ${DISK_FREE:-0} -lt 100 ]]; then
+    warn "Disk ${DISK_FREE} GB free — recommended 100 GB. Chain data grows over time."
+    warn_shown=1
+  fi
+  if [[ $warn_shown -eq 1 ]]; then
+    echo ""
+    echo -e "  ${YELLOW}Minimum requirements met. For best performance use: 4 vCPU / 4 GB RAM / 100 GB SSD${NC}"
+    echo ""
+  fi
 }
 
 # ════════════════════════════════════════════════════════════
