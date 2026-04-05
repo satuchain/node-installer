@@ -218,7 +218,7 @@ print_banner() {
   echo "  ███████║██║  ██║   ██║   ╚██████╔╝╚██████╗██║  ██║██║  ██║██║██║ ╚████║"
   echo "  ╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝"
   echo -e "${NC}"
-  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v2.1.3${NC}"
+  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v2.1.4${NC}"
   echo -e "  Chain ID: ${CYAN}$CHAIN_ID${NC}  •  APoS Consensus  •  Docker-based"
   echo ""
 }
@@ -779,18 +779,24 @@ COMPOSE
   }
 
   info "$(t compose_pull)"
-  docker pull "$BSC_IMAGE" 2>/dev/null
+  docker pull "$BSC_IMAGE"
 
   # Phase 1: Start in sync-only mode
   info "$(t compose_start)"
   write_compose "sync"
-  docker compose -f "$COMPOSE_FILE" up -d 2>/dev/null
+  # Stop and remove existing container if present (idempotent re-run)
+  docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+  docker compose -f "$COMPOSE_FILE" up -d
+  if [[ $? -ne 0 ]]; then
+    warn "docker compose up failed — check logs: docker compose -f $COMPOSE_FILE logs"
+    die "$(t compose_fail)"
+  fi
 
   sleep 6
   docker ps --filter "name=$CONTAINER_NAME" --filter "status=running" --format "{{.Names}}" \
     | grep -q "$CONTAINER_NAME" \
     && log "$(t compose_ok)" \
-    || die "$(t compose_fail)"
+    || { docker compose -f "$COMPOSE_FILE" logs --tail=20; die "$(t compose_fail)"; }
 
   # Phase 2: Wait for admin activation approval
   log "$(t sync_mode_start)"
