@@ -106,19 +106,25 @@ t() {
     id:account_ok)     echo "Akun siap" ;;
     id:fw_ok)          echo "Firewall: SSH(22) + P2P(30303) terbuka, semua lainnya ditolak" ;;
     id:fw_skip)        echo "ufw tidak tersedia, lewati konfigurasi firewall" ;;
-    id:compose_pull)   echo "Menarik image Docker BSC..." ;;
-    id:compose_start)  echo "Memulai node validator..." ;;
-    id:compose_ok)     echo "Node berjalan!" ;;
-    id:compose_fail)   echo "Node gagal start. Cek: docker logs $CONTAINER_NAME" ;;
-    id:monitor_ok)     echo "Monitor aktif — sinkron ke dashboard setiap 5 menit" ;;
-    id:report_ok)      echo "Info awal dikirim ke dashboard" ;;
-    id:summary_title)  echo "Instalasi Berhasil!" ;;
-    id:summary_logs)   echo "Pantau log:" ;;
-    id:summary_view)   echo "Pantau di dashboard:" ;;
-    id:summary_next)   echo "Langkah selanjutnya (otomatis):" ;;
-    id:summary_s1)     echo "Node sinkron dengan SatuChain" ;;
-    id:summary_s2)     echo "Monitor kirim status ke dashboard tiap 5 menit" ;;
-    id:summary_s3)     echo "Setelah sinkron, admin mendapat notifikasi untuk approve" ;;
+    id:compose_pull)           echo "Menarik image Docker BSC..." ;;
+    id:compose_start)          echo "Memulai node (mode sinkron)..." ;;
+    id:compose_ok)             echo "Node berjalan dalam mode sinkron!" ;;
+    id:compose_fail)           echo "Node gagal start. Cek: docker logs $CONTAINER_NAME" ;;
+    id:sync_mode_start)        echo "Node sedang sinkron blockchain..." ;;
+    id:waiting_activation)     echo "Menunggu persetujuan aktivasi dari admin dashboard... (cek setiap 30 detik)" ;;
+    id:still_waiting)          echo "Masih menunggu persetujuan admin" ;;
+    id:activation_approved)    echo "Persetujuan diterima! Mengaktifkan mode validator..." ;;
+    id:starting_validator_mode)echo "Memulai ulang node dalam mode validator (--mine)..." ;;
+    id:validator_mode_ok)      echo "Node aktif sebagai validator!" ;;
+    id:monitor_ok)             echo "Monitor aktif — sinkron ke dashboard setiap 5 menit" ;;
+    id:report_ok)              echo "Info awal dikirim ke dashboard" ;;
+    id:summary_title)          echo "Instalasi Berhasil!" ;;
+    id:summary_logs)           echo "Pantau log:" ;;
+    id:summary_view)           echo "Pantau di dashboard:" ;;
+    id:summary_next)           echo "Langkah selanjutnya (otomatis):" ;;
+    id:summary_s1)             echo "Node sinkron dengan SatuChain" ;;
+    id:summary_s2)             echo "Monitor kirim status ke dashboard tiap 5 menit" ;;
+    id:summary_s3)             echo "Setelah admin approve, node otomatis aktif sebagai validator" ;;
     # English (default)
     en:step_req)       echo "Checking Server Requirements" ;;
     en:step_conn)      echo "Checking Connectivity" ;;
@@ -167,14 +173,20 @@ t() {
     en:account_ok)     echo "Account ready" ;;
     en:fw_ok)          echo "Firewall: SSH(22) + P2P(30303) open, all others denied" ;;
     en:fw_skip)        echo "ufw not available, skipping firewall setup" ;;
-    en:compose_pull)   echo "Pulling BSC Docker image..." ;;
-    en:compose_start)  echo "Starting validator node..." ;;
-    en:compose_ok)     echo "Node is running!" ;;
-    en:compose_fail)   echo "Node failed to start. Check: docker logs $CONTAINER_NAME" ;;
-    en:monitor_ok)     echo "Monitor active — syncing to dashboard every 5 minutes" ;;
-    en:report_ok)      echo "Initial info sent to dashboard" ;;
-    en:summary_title)  echo "Installation Successful!" ;;
-    en:summary_logs)   echo "Monitor logs:" ;;
+    en:compose_pull)           echo "Pulling BSC Docker image..." ;;
+    en:compose_start)          echo "Starting node (sync mode)..." ;;
+    en:compose_ok)             echo "Node running in sync mode!" ;;
+    en:compose_fail)           echo "Node failed to start. Check: docker logs $CONTAINER_NAME" ;;
+    en:sync_mode_start)        echo "Node is syncing the blockchain..." ;;
+    en:waiting_activation)     echo "Waiting for activation approval from admin dashboard... (checking every 30s)" ;;
+    en:still_waiting)          echo "Still waiting for admin approval" ;;
+    en:activation_approved)    echo "Approval received! Activating validator mode..." ;;
+    en:starting_validator_mode)echo "Restarting node in validator mode (--mine)..." ;;
+    en:validator_mode_ok)      echo "Node is now active as validator!" ;;
+    en:monitor_ok)             echo "Monitor active — syncing to dashboard every 5 minutes" ;;
+    en:report_ok)              echo "Initial info sent to dashboard" ;;
+    en:summary_title)          echo "Installation Successful!" ;;
+    en:summary_logs)           echo "Monitor logs:" ;;
     en:summary_view)   echo "View on dashboard:" ;;
     en:summary_next)   echo "Next steps (automatic):" ;;
     en:summary_s1)     echo "Node syncing with SatuChain" ;;
@@ -599,8 +611,10 @@ setup_compose_and_start() {
     info "Chaindata exists, skipping genesis init"
   fi
 
-  # Write docker-compose.yml
-  cat > "$COMPOSE_FILE" <<COMPOSE
+  # Write docker-compose.yml — SYNC ONLY mode (no --mine until admin approves)
+  write_compose() {
+    local mode=$1  # "sync" or "validator"
+    cat > "$COMPOSE_FILE" <<COMPOSE
 services:
   $CONTAINER_NAME:
     image: $BSC_IMAGE
@@ -615,10 +629,10 @@ services:
     command:
       - --config=/config/config.toml
       - --networkid=$CHAIN_ID
-      - --mine
+$([ "$mode" = "validator" ] && echo "      - --mine
       - --miner.etherbase=$VALIDATOR_ADDRESS
       - --unlock=$VALIDATOR_ADDRESS
-      - --password=/config/password.txt
+      - --password=/config/password.txt")
       - --bootnodes=$BOOTNODE
       - --verbosity=3
       - --log.file=/logs/geth.log
@@ -626,11 +640,14 @@ services:
       - --log.maxsize=100
       - --log.maxbackups=7
 COMPOSE
+  }
 
   info "$(t compose_pull)"
-  docker compose -f "$COMPOSE_FILE" pull 2>/dev/null || docker pull "$BSC_IMAGE" 2>/dev/null
+  docker pull "$BSC_IMAGE" 2>/dev/null
 
+  # Phase 1: Start in sync-only mode
   info "$(t compose_start)"
+  write_compose "sync"
   docker compose -f "$COMPOSE_FILE" up -d 2>/dev/null
 
   sleep 6
@@ -638,6 +655,43 @@ COMPOSE
     | grep -q "$CONTAINER_NAME" \
     && log "$(t compose_ok)" \
     || die "$(t compose_fail)"
+
+  # Phase 2: Wait for admin activation approval
+  log "$(t sync_mode_start)"
+  echo ""
+  info "$(t waiting_activation)"
+
+  local waited=0
+  while true; do
+    STATUS=$(curl -s --max-time 10 "$API_BASE/node-status?key=$VALIDATOR_KEY" 2>/dev/null \
+      | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
+
+    if [[ "$STATUS" == "approved" ]]; then
+      log "$(t activation_approved)"
+      break
+    fi
+
+    # Print progress every 5 minutes
+    if (( waited % 300 == 0 && waited > 0 )); then
+      info "$(t still_waiting) (${waited}s)"
+    fi
+
+    sleep 30
+    waited=$(( waited + 30 ))
+  done
+
+  # Phase 3: Restart with validator (--mine) mode
+  info "$(t starting_validator_mode)"
+  write_compose "validator"
+  docker compose -f "$COMPOSE_FILE" up -d 2>/dev/null
+  sleep 6
+
+  # Confirm activation to API
+  curl -s --max-time 10 -X POST "$API_BASE/node-activated" \
+    -H "Content-Type: application/json" \
+    -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\"}" > /dev/null 2>&1
+
+  log "$(t validator_mode_ok)"
 }
 
 # ════════════════════════════════════════════════════════════
