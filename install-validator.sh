@@ -95,9 +95,13 @@ t() {
     id:genesis_ok)     echo "Genesis diunduh dan diverifikasi" ;;
     id:genesis_fail)   echo "Gagal mengunduh genesis. Hubungi admin SatuChain." ;;
     id:account_exists) echo "Keystore sudah ada untuk alamat ini" ;;
-    id:account_method) echo "Pilih metode import:" ;;
-    id:account_opt1)   echo "  1) Import private key" ;;
-    id:account_opt2)   echo "  2) Import file keystore (UTC--...)" ;;
+    id:account_method) echo "Pilih metode import akun validator:" ;;
+    id:account_opt1)   echo "  1) Import private key (64 karakter hex)" ;;
+    id:account_opt2)   echo "  2) Import file keystore JSON (UTC--...)" ;;
+    id:account_note)   echo "CATATAN: Yang diminta adalah PRIVATE KEY WALLET VALIDATOR" ;;
+    id:account_note2)  echo "         (address yang didaftarkan on-chain, bukan Validator Key satu-val-...)" ;;
+    id:account_note3)  echo "         Format: 64 karakter hex tanpa awalan 0x" ;;
+    id:account_note4)  echo "         Contoh: a1b2c3d4e5f6....(64 karakter)" ;;
     id:account_pk)     echo "Private key (tanpa 0x):" ;;
     id:account_pw)     echo "Buat password keystore:" ;;
     id:account_pw2)    echo "Konfirmasi password:" ;;
@@ -162,9 +166,13 @@ t() {
     en:genesis_ok)     echo "Genesis downloaded and verified" ;;
     en:genesis_fail)   echo "Failed to download genesis. Contact SatuChain admin." ;;
     en:account_exists) echo "Keystore already exists for this address" ;;
-    en:account_method) echo "Select import method:" ;;
-    en:account_opt1)   echo "  1) Import private key" ;;
-    en:account_opt2)   echo "  2) Import keystore file (UTC--...)" ;;
+    en:account_method) echo "Select validator account import method:" ;;
+    en:account_opt1)   echo "  1) Import private key (64-char hex)" ;;
+    en:account_opt2)   echo "  2) Import keystore JSON file (UTC--...)" ;;
+    en:account_note)   echo "NOTE: This requires your VALIDATOR WALLET PRIVATE KEY" ;;
+    en:account_note2)  echo "      (the address registered on-chain, NOT the Validator Key satu-val-...)" ;;
+    en:account_note3)  echo "      Format: 64 hex characters WITHOUT 0x prefix" ;;
+    en:account_note4)  echo "      Example: a1b2c3d4e5f6....(64 chars)" ;;
     en:account_pk)     echo "Private key (without 0x):" ;;
     en:account_pw)     echo "Create keystore password:" ;;
     en:account_pw2)    echo "Confirm password:" ;;
@@ -210,7 +218,7 @@ print_banner() {
   echo "  ███████║██║  ██║   ██║   ╚██████╔╝╚██████╗██║  ██║██║  ██║██║██║ ╚████║"
   echo "  ╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝"
   echo -e "${NC}"
-  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v2.0.0${NC}"
+  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v2.1.3${NC}"
   echo -e "  Chain ID: ${CYAN}$CHAIN_ID${NC}  •  APoS Consensus  •  Docker-based"
   echo ""
 }
@@ -620,16 +628,40 @@ setup_account() {
     echo -e "${BOLD}$(t account_exist_pw)${NC}"
     read -r -s KEYSTORE_PASSWORD 2>/dev/null; echo ""
   else
+    # Explanation box
+    echo ""
+    echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║  $(t account_note)  ║${NC}"
+    echo -e "${YELLOW}║  $(t account_note2)  ║${NC}"
+    echo -e "${YELLOW}║                                                              ║${NC}"
+    echo -e "${YELLOW}║  $(t account_note3)         ║${NC}"
+    echo -e "${YELLOW}║  $(t account_note4)  ║${NC}"
+    echo -e "${YELLOW}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "$(t account_method)"
     echo -e "${BOLD}$(t account_opt1)${NC}"
     echo -e "${BOLD}$(t account_opt2)${NC}"
-    read -r -p "  [1/2]: " OPT 2>/dev/null || OPT="1"
+
+    while true; do
+      read -r -p "  [1/2]: " OPT 2>/dev/null || OPT="1"
+      [[ "$OPT" == "1" || "$OPT" == "2" ]] && break
+      echo -e "${RED}  ✗ Masukkan angka 1 atau 2 (Enter 1 or 2)${NC}"
+    done
 
     case $OPT in
       1)
         echo -e "${BOLD}$(t account_pk)${NC}"
-        read -r -s PRIVKEY; echo ""
+        while true; do
+          read -r -s PRIVKEY; echo ""
+          # Strip 0x prefix if user accidentally includes it
+          PRIVKEY="${PRIVKEY#0x}"
+          PRIVKEY="${PRIVKEY#0X}"
+          if [[ ${#PRIVKEY} -eq 64 ]] && [[ "$PRIVKEY" =~ ^[0-9a-fA-F]+$ ]]; then
+            break
+          fi
+          echo -e "${RED}  ✗ Format salah. Harus 64 karakter hex tanpa 0x. (64 hex chars, no 0x)${NC}"
+          echo -e "${BOLD}$(t account_pk)${NC}"
+        done
         echo -e "${BOLD}$(t account_pw)${NC}"
         read -r -s KEYSTORE_PASSWORD; echo ""
         echo -e "${BOLD}$(t account_pw2)${NC}"
@@ -664,8 +696,6 @@ setup_account() {
         read -r -s KEYSTORE_PASSWORD; echo ""
         log "Keystore imported"
         ;;
-      *)
-        die "Invalid option" ;;
     esac
   fi
 
