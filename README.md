@@ -13,26 +13,37 @@ Before running the installer, make sure you have:
 
 > The installer **will not run** without a valid Validator Key from the admin.
 
-## Minimum Server Specifications
+## Server Specifications
 
-| Component | Minimum |
-|-----------|---------|
-| OS | Ubuntu 20.04 / 22.04 / Debian 11+ |
-| CPU | 4 cores (x86_64) |
-| RAM | 8 GB |
-| Disk | 100 GB SSD |
-| Network | Port 30303 TCP/UDP open |
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| OS | Ubuntu 20.04 / 22.04 / Debian 11+ | Ubuntu 22.04 LTS |
+| CPU | 2 vCPU (x86_64) | 4 vCPU |
+| RAM | 2 GB (+ 2 GB swap) | 4 GB |
+| Disk | 50 GB SSD | 100 GB SSD |
+| Network | 10 Mbps, Port 30303 TCP/UDP open | 100 Mbps |
+| Uptime | > 90% | > 99% |
+
+> **Note:** If your server has less than 2 GB RAM, the installer will offer to automatically create a swap file. Validators with extended downtime (> 10%) or double-signing will be slashed 5% and jailed for 7 days.
+
+### Recommended VPS Providers
+
+| Provider | Plan | Spec | Price |
+|----------|------|------|-------|
+| Hetzner | CPX21 | 3 vCPU / 4 GB / 80 GB | ~€6/mo |
+| DigitalOcean | Basic | 2 vCPU / 2 GB / 60 GB | ~$18/mo |
+| Contabo | VPS S | 4 vCPU / 4 GB / 100 GB | ~$7/mo |
 
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/satuchain/sdk/main/install-validator.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh | sudo bash
 ```
 
 > **Recommended:** Download first, review the script, then run:
 
 ```bash
-wget https://raw.githubusercontent.com/satuchain/sdk/main/install-validator.sh
+wget https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh
 # Review the script before running
 less install-validator.sh
 # Run
@@ -41,7 +52,7 @@ sudo bash install-validator.sh
 
 ## What the Installer Does
 
-1. Check server specifications
+1. Check server specifications (CPU, RAM, disk) — with clear error messages and auto swap setup
 2. Check network connectivity
 3. **Validate requirements & Validator Key** with the SatuChain server (must be valid)
 4. Install Docker (automatically if not present)
@@ -90,15 +101,19 @@ tail -f /opt/satuchain-validator/logs/monitor.log
 
 ## Node Software
 
-SatuChain validator nodes run on **APOS** (Autonomous Proof-of-Stake), SatuChain's proprietary node software built and maintained by the SatuChain team. The node image is hosted on the SatuChain GitHub Container Registry and verified via checksum during installation.
+SatuChain validator nodes run on **APoS** (Autonomous Proof-of-Stake), SatuChain's proprietary consensus built and maintained by the SatuChain team. The node image is hosted on the SatuChain GitHub Container Registry and verified via checksum during installation.
 
 - Node image: `ghcr.io/satuchain/node`
-- Consensus: Proof of Authority / Proof of Stake (Clique + validator set)
-- Engine: EVM-compatible
+- Consensus: APoS (Autonomous Proof-of-Stake)
+- Engine: EVM-compatible (Chain ID: 10111945)
 
-## Support
+## Links
 
 - Dashboard: [staking.satuchain.com](https://staking.satuchain.com)
 - Explorer: [stuscan.com](https://stuscan.com)
 - Chain ID: `10111945`
 - Network: SatuChain Mainnet
+
+---
+
+© SatuChain. All rights reserved.
