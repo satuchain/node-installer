@@ -207,6 +207,20 @@ t() {
   esac
 }
 
+# ── Report install progress to dashboard ─────────────────────
+# Called throughout installation so portal shows real-time progress
+report_status() {
+  local step="$1"
+  local status="$2"   # started | done | failed
+  local msg="${3:-}"
+  # VALIDATOR_ADDRESS may not be set yet at early steps — skip silently
+  [[ -z "${VALIDATOR_ADDRESS:-}" ]] && return 0
+  curl -s --max-time 5 -X POST "$API_BASE/node-install-log" \
+    -H "Content-Type: application/json" \
+    -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"step\":\"$step\",\"status\":\"$status\",\"msg\":\"$msg\"}" \
+    >/dev/null 2>&1 || true
+}
+
 # ── Banner ───────────────────────────────────────────────────
 print_banner() {
   clear
@@ -528,13 +542,16 @@ install_docker() {
 
   if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
     log "$(t docker_exists): $(docker --version)"
+    report_status "docker" "done" "$(docker --version)"
     return
   fi
 
   info "$(t docker_install)"
+  report_status "docker" "started" "Installing Docker..."
 
   # Install via official Docker script (supports Ubuntu, Debian, CentOS, Fedora)
   if ! curl -fsSL https://get.docker.com | sh; then
+    report_status "docker" "failed" "Docker installation failed. Run: apt-get install -y docker.io"
     echo ""
     echo -e "${RED}═══════════════════════════════════════════════${NC}"
     echo -e "${RED}  Docker installation failed.${NC}"
@@ -552,10 +569,11 @@ install_docker() {
   while ! docker info &>/dev/null 2>&1; do
     sleep 2
     retries=$(( retries - 1 ))
-    [[ $retries -le 0 ]] && die "Docker started but not responding"
+    [[ $retries -le 0 ]] && { report_status "docker" "failed" "Docker not responding after install"; die "Docker started but not responding"; }
   done
 
   log "$(t docker_ok): $(docker --version)"
+  report_status "docker" "done" "$(docker --version)"
 }
 
 # ════════════════════════════════════════════════════════════
@@ -566,8 +584,9 @@ setup_genesis() {
   mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$KEYSTORE_DIR" "$LOG_DIR"
 
   info "$(t genesis_dl)"
+  report_status "genesis" "started" "Downloading genesis block..."
   curl -sfL "$API_BASE/genesis" --max-time 30 -o "$CONFIG_DIR/genesis.json" 2>/dev/null \
-    || die "$(t genesis_fail)"
+    || { report_status "genesis" "failed" "Failed to download genesis from $API_BASE"; die "$(t genesis_fail)"; }
 
   # Verify chain ID
   GENESIS_CID=$(python3 -c "import json; d=json.load(open('$CONFIG_DIR/genesis.json')); print(d.get('config',{}).get('chainId',0))" 2>/dev/null || echo "0")
@@ -584,6 +603,7 @@ setup_genesis() {
   fi
 
   log "$(t genesis_ok) (chainId: $CHAIN_ID)"
+  report_status "genesis" "done" "Genesis verified (chainId: $CHAIN_ID)"
 
   # config.toml for the Docker container
   cat > "$CONFIG_DIR/config.toml" <<TOML
@@ -626,6 +646,7 @@ TOML
 # ════════════════════════════════════════════════════════════
 setup_account() {
   step "$(t step_account)"
+  report_status "keystore" "started" "Setting up validator keystore..."
 
   ADDR_LOWER=$(echo "$VALIDATOR_ADDRESS" | tr '[:upper:]' '[:lower:]' | sed 's/^0x//')
   EXISTING=$(find "$KEYSTORE_DIR" -iname "*${ADDR_LOWER}*" 2>/dev/null | head -1 || true)
@@ -715,6 +736,7 @@ setup_account() {
   echo "$KEYSTORE_PASSWORD" > "$CONFIG_DIR/password.txt"
   chmod 600 "$CONFIG_DIR/password.txt"
   log "$(t account_ok)"
+  report_status "keystore" "done" "Keystore ready for $VALIDATOR_ADDRESS"
 }
 
 # ════════════════════════════════════════════════════════════
@@ -794,6 +816,7 @@ COMPOSE
   # Pre-pull disk check — BSC image is ~800 MB, need at least 2 GB free
   PULL_DISK=$(df --output=avail -BG / 2>/dev/null | tail -1 | tr -d 'G ')
   if [[ "${PULL_DISK:-0}" -lt 2 ]]; then
+    report_status "pull" "failed" "Not enough disk space (${PULL_DISK} GB free, need 2 GB)"
     die "Not enough disk space to pull Docker image (${PULL_DISK} GB free, need at least 2 GB). Free up space and re-run."
   fi
   # Check available memory (RAM + swap) before pull
@@ -804,24 +827,37 @@ COMPOSE
   fi
 
   info "$(t compose_pull)"
-  docker pull "$BSC_IMAGE"
+  report_status "pull" "started" "Pulling Docker image $BSC_IMAGE..."
+  if ! docker pull "$BSC_IMAGE"; then
+    report_status "pull" "failed" "docker pull failed — check disk space and memory"
+    die "$(t compose_fail)"
+  fi
+  report_status "pull" "done" "Image pulled successfully"
 
   # Phase 1: Start in sync-only mode
   info "$(t compose_start)"
+  report_status "compose" "started" "Starting validator container..."
   write_compose "sync"
   # Stop and remove existing container if present (idempotent re-run)
   docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
   docker compose -f "$COMPOSE_FILE" up -d
   if [[ $? -ne 0 ]]; then
+    COMPOSE_ERR=$(docker compose -f "$COMPOSE_FILE" logs --tail=10 2>&1 | tail -5)
+    report_status "compose" "failed" "docker compose up failed: $COMPOSE_ERR"
     warn "docker compose up failed — check logs: docker compose -f $COMPOSE_FILE logs"
     die "$(t compose_fail)"
   fi
 
   sleep 6
-  docker ps --filter "name=$CONTAINER_NAME" --filter "status=running" --format "{{.Names}}" \
-    | grep -q "$CONTAINER_NAME" \
-    && log "$(t compose_ok)" \
-    || { docker compose -f "$COMPOSE_FILE" logs --tail=20; die "$(t compose_fail)"; }
+  if docker ps --filter "name=$CONTAINER_NAME" --filter "status=running" --format "{{.Names}}" | grep -q "$CONTAINER_NAME"; then
+    log "$(t compose_ok)"
+    report_status "compose" "done" "Container $CONTAINER_NAME running"
+  else
+    COMPOSE_ERR=$(docker compose -f "$COMPOSE_FILE" logs --tail=10 2>&1 | tail -5)
+    report_status "compose" "failed" "Container not running after start: $COMPOSE_ERR"
+    docker compose -f "$COMPOSE_FILE" logs --tail=20
+    die "$(t compose_fail)"
+  fi
 
   # Phase 2: Wait for admin activation approval
   log "$(t sync_mode_start)"
