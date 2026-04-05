@@ -8,6 +8,15 @@
 
 set -euo pipefail
 
+# ── Restore terminal stdin (required when running via curl | bash) ─────────────
+# When piped through curl, bash stdin is the script pipe — redirect to terminal
+# so interactive read commands (passwords, menu selection) work correctly.
+if [ -t 0 ]; then
+  : # already a terminal
+elif [ -e /dev/tty ]; then
+  exec < /dev/tty
+fi
+
 # ── Colors ───────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
