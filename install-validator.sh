@@ -245,7 +245,7 @@ print_banner() {
   echo "  ███████║██║  ██║   ██║   ╚██████╔╝╚██████╗██║  ██║██║  ██║██║██║ ╚████║"
   echo "  ╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝"
   echo -e "${NC}"
-  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v2.1.9${NC}"
+  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v2.2.0${NC}"
   echo -e "  Chain ID: ${CYAN}$CHAIN_ID${NC}  •  APoS Consensus  •  Docker-based"
   echo ""
 }
@@ -883,16 +883,24 @@ COMPOSE
   if docker ps --filter "name=$CONTAINER_NAME" --filter "status=running" --format "{{.Names}}" | grep -q "$CONTAINER_NAME"; then
     log "$(t compose_ok)"
     report_status "compose" "done" "Container $CONTAINER_NAME running"
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  ${GREEN}✓ Node container berjalan / Node container is running${NC}"
+    echo -e "  Container : ${CYAN}$CONTAINER_NAME${NC}"
+    docker ps --filter "name=$CONTAINER_NAME" --format "  Status    : {{.Status}}\n  Image     : {{.Image}}" 2>/dev/null || true
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "  ${BOLD}Node startup logs (10 baris pertama / first 10 lines):${NC}"
+    docker logs "$CONTAINER_NAME" --tail=10 2>&1 || true
+    echo ""
   else
     echo ""
-    warn "Container tidak running setelah start. Menampilkan log / Container not running. Showing logs:"
+    warn "Container tidak running setelah start / Container not running after start:"
     echo "──────────────────────────────────────────"
     docker logs "$CONTAINER_NAME" --tail=30 2>&1 || true
     docker compose -f "$COMPOSE_FILE" logs --tail=30 2>&1 || true
     echo "──────────────────────────────────────────"
-    echo ""
-    # Show all containers (including exited)
-    warn "docker ps -a output:"
+    warn "docker ps -a:"
     docker ps -a 2>&1 || true
     COMPOSE_ERR=$(docker logs "$CONTAINER_NAME" 2>&1 | tail -3 || docker compose -f "$COMPOSE_FILE" logs --tail=3 2>&1)
     report_status "compose" "failed" "Container not running: $COMPOSE_ERR"
@@ -902,10 +910,32 @@ COMPOSE
   # Phase 2: Wait for admin activation approval
   log "$(t sync_mode_start)"
   echo ""
+  echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────┐${NC}"
+  echo -e "${CYAN}│${NC}  ${BOLD}Node sedang sinkronisasi blockchain / Node is syncing${NC}          ${CYAN}│${NC}"
+  echo -e "${CYAN}│${NC}                                                                 ${CYAN}│${NC}"
+  echo -e "${CYAN}│${NC}  Status sync akan ditampilkan setiap 30 detik.                  ${CYAN}│${NC}"
+  echo -e "${CYAN}│${NC}  Sync status will be shown every 30 seconds.                    ${CYAN}│${NC}"
+  echo -e "${CYAN}│${NC}                                                                 ${CYAN}│${NC}"
+  echo -e "${CYAN}│${NC}  Kamu bisa tekan ${BOLD}Ctrl+C${NC} kapanpun — node tetap berjalan           ${CYAN}│${NC}"
+  echo -e "${CYAN}│${NC}  di background. Cek dashboard untuk melihat progress.           ${CYAN}│${NC}"
+  echo -e "${CYAN}│${NC}  You can press ${BOLD}Ctrl+C${NC} anytime — node keeps running in           ${CYAN}│${NC}"
+  echo -e "${CYAN}│${NC}  background. Check dashboard for progress.                      ${CYAN}│${NC}"
+  echo -e "${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
+  echo ""
   info "$(t waiting_activation)"
 
   local waited=0
   while true; do
+    # Check container still running
+    if ! docker ps --filter "name=$CONTAINER_NAME" --filter "status=running" --format "{{.Names}}" 2>/dev/null | grep -q "$CONTAINER_NAME"; then
+      echo ""
+      warn "⚠ Container berhenti / Container stopped unexpectedly!"
+      echo "  Last logs:"
+      docker logs "$CONTAINER_NAME" --tail=20 2>&1 || true
+      report_status "node" "failed" "Container stopped unexpectedly"
+      die "Node container stopped. Check logs above. Re-run installer after fixing the issue."
+    fi
+
     STATUS=$(curl -s --max-time 10 "$API_BASE/node-status?key=$VALIDATOR_KEY" 2>/dev/null \
       | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
 
@@ -914,10 +944,15 @@ COMPOSE
       break
     fi
 
-    # Print progress every 5 minutes
-    if (( waited % 300 == 0 && waited > 0 )); then
-      info "$(t still_waiting) (${waited}s)"
-    fi
+    # Print sync progress every 30 seconds
+    LOCAL_BLOCK=$(docker exec "$CONTAINER_NAME" sh -c \
+      'geth attach --datadir /data --exec "eth.blockNumber" 2>/dev/null | tr -d "\r\n"' \
+      2>/dev/null || echo "?")
+    PEERS=$(docker exec "$CONTAINER_NAME" sh -c \
+      'geth attach --datadir /data --exec "net.peerCount" 2>/dev/null | tr -d "\r\n"' \
+      2>/dev/null || echo "?")
+    TS=$(date '+%H:%M:%S')
+    echo -e "  [${TS}] Block: ${CYAN}${LOCAL_BLOCK}${NC} | Peers: ${CYAN}${PEERS}${NC} | Status: ${YELLOW}menunggu aktivasi admin / waiting admin activation${NC}"
 
     sleep 30
     waited=$(( waited + 30 ))
