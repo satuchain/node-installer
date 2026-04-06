@@ -42,6 +42,9 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
+INSTALLER_VERSION="2.2.0"
+INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
+GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
 # Minimum requirements — HARD STOP if not met
 # Minimum: 2 vCPU / 2 GB RAM / 15 GB Disk
@@ -980,12 +983,13 @@ setup_monitor() {
 
   cat > "$MONITOR_SCRIPT" << 'MONITOR'
 #!/bin/bash
-# SatuChain Validator Monitor v2.0 — auto sync health to dashboard
+# SatuChain Validator Monitor v2.1 — auto sync health to dashboard + auto-update node image
 
 INSTALL_DIR="/opt/satuchain-validator"
 STATE_FILE="$INSTALL_DIR/.state"
 API_BASE="https://staking.satuchain.com/api"
 CONTAINER="satuchain-validator"
+COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 LOG_FILE="$INSTALL_DIR/logs/monitor.log"
 
 load_state() { grep "^$1=" "$STATE_FILE" 2>/dev/null | cut -d= -f2- || true; }
@@ -1085,6 +1089,32 @@ if [[ "$IS_SYNCED" == "true" && "$ALREADY_REPORTED" != "true" ]]; then
   fi
 fi
 
+# ── Auto-update node image (check once per hour via lock file) ────────────────
+UPDATE_LOCK="$INSTALL_DIR/.last-image-check"
+NOW=$(date +%s)
+LAST_CHECK=$(cat "$UPDATE_LOCK" 2>/dev/null || echo "0")
+if (( NOW - LAST_CHECK > 3600 )); then
+  echo "$NOW" > "$UPDATE_LOCK"
+  # Fetch recommended image from dashboard API
+  LATEST_IMAGE=$(curl -s --max-time 10 "$API_BASE/node-image" 2>/dev/null \
+    | python3 -c "import json,sys; print(json.load(sys.stdin).get('image',''))" 2>/dev/null || echo "")
+  if [[ -n "$LATEST_IMAGE" ]]; then
+    CURRENT_IMAGE=$(grep "image:" "$COMPOSE_FILE" 2>/dev/null | awk '{print $2}' | head -1 || echo "")
+    if [[ -n "$CURRENT_IMAGE" && "$CURRENT_IMAGE" != "$LATEST_IMAGE" ]]; then
+      log_m "New node image available: $LATEST_IMAGE (current: $CURRENT_IMAGE)"
+      log_m "Pulling new image..."
+      if docker pull "$LATEST_IMAGE" >> "$LOG_FILE" 2>&1; then
+        # Update compose file with new image
+        sed -i "s|image: .*|image: $LATEST_IMAGE|g" "$COMPOSE_FILE"
+        docker compose -f "$COMPOSE_FILE" up -d >> "$LOG_FILE" 2>&1
+        log_m "Node updated to $LATEST_IMAGE and restarted"
+      else
+        log_m "WARN: Failed to pull $LATEST_IMAGE"
+      fi
+    fi
+  fi
+fi
+
 # ── Rotate log (keep last 1000 lines) ────────────────────────
 if [[ -f "$LOG_FILE" ]] && [[ $(wc -l < "$LOG_FILE") -gt 1000 ]]; then
   tail -500 "$LOG_FILE" > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE"
@@ -1155,10 +1185,61 @@ print_summary() {
 }
 
 # ════════════════════════════════════════════════════════════
+# SELF-UPDATE CHECK
+# ════════════════════════════════════════════════════════════
+self_update() {
+  # Skip self-update if running via curl|bash (no local file to replace)
+  # Only update if invoked as a saved local script
+  if [[ "${SATUCHAIN_SKIP_UPDATE:-}" == "1" ]]; then return; fi
+
+  info "Checking for installer updates..."
+  LATEST_TAG=$(curl -s --max-time 8 "$GITHUB_LATEST_API" \
+    | python3 -c "import json,sys; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null || echo "")
+
+  if [[ -z "$LATEST_TAG" ]]; then
+    warn "Could not check for updates (no internet or API unavailable). Continuing with v${INSTALLER_VERSION}."
+    return
+  fi
+
+  # Strip leading 'v' for comparison
+  LATEST_VER="${LATEST_TAG#v}"
+
+  if [[ "$LATEST_VER" == "$INSTALLER_VERSION" ]]; then
+    log "Installer is up to date (v${INSTALLER_VERSION})"
+    return
+  fi
+
+  echo ""
+  echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${YELLOW}║  UPDATE TERSEDIA / UPDATE AVAILABLE                          ║${NC}"
+  echo -e "${YELLOW}║                                                              ║${NC}"
+  echo -e "${YELLOW}║  Versi saat ini / Current : v${INSTALLER_VERSION}                           ║${NC}"
+  echo -e "${YELLOW}║  Versi terbaru  / Latest  : ${LATEST_TAG}                           ║${NC}"
+  echo -e "${YELLOW}║                                                              ║${NC}"
+  echo -e "${YELLOW}║  Mengunduh versi terbaru... / Downloading latest...          ║${NC}"
+  echo -e "${YELLOW}╚══════════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+
+  NEW_SCRIPT=$(mktemp /tmp/satuchain-installer-XXXXXX.sh)
+  if curl -fsSL --max-time 30 "$INSTALLER_URL" -o "$NEW_SCRIPT" 2>/dev/null; then
+    chmod +x "$NEW_SCRIPT"
+    log "Downloaded v${LATEST_TAG}. Restarting with new version..."
+    echo ""
+    # Re-exec with new script, skip update check to avoid infinite loop
+    export SATUCHAIN_SKIP_UPDATE=1
+    exec bash "$NEW_SCRIPT" "$@"
+  else
+    warn "Failed to download update. Continuing with v${INSTALLER_VERSION}."
+    rm -f "$NEW_SCRIPT"
+  fi
+}
+
+# ════════════════════════════════════════════════════════════
 # MAIN
 # ════════════════════════════════════════════════════════════
 main() {
   print_banner
+  self_update "$@"
   select_language
   check_requirements   # HARD STOP if specs not met
   check_connectivity
