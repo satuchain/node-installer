@@ -241,7 +241,7 @@ print_banner() {
   echo "  ███████║██║  ██║   ██║   ╚██████╔╝╚██████╗██║  ██║██║  ██║██║██║ ╚████║"
   echo "  ╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝"
   echo -e "${NC}"
-  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v2.1.5${NC}"
+  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v2.1.6${NC}"
   echo -e "  Chain ID: ${CYAN}$CHAIN_ID${NC}  •  APoS Consensus  •  Docker-based"
   echo ""
 }
@@ -442,6 +442,8 @@ validate_key() {
   # Parse fields
   CAN_INSTALL=$(echo "$REQ_RESPONSE" | python3 -c \
     "import json,sys; print(json.load(sys.stdin).get('canInstall',False))" 2>/dev/null || echo "False")
+  IS_EXEMPT=$(echo "$REQ_RESPONSE" | python3 -c \
+    "import json,sys; print(json.load(sys.stdin).get('exempt',False))" 2>/dev/null || echo "False")
   STU_MET=$(echo "$REQ_RESPONSE" | python3 -c \
     "import json,sys; d=json.load(sys.stdin); print(d['requirements']['stu']['met'])" 2>/dev/null || echo "False")
   STU_STAKED=$(echo "$REQ_RESPONSE" | python3 -c \
@@ -465,7 +467,9 @@ validate_key() {
   echo -e "  Address: ${CYAN}${VALIDATOR_ADDRESS}${NC}"
   echo ""
 
-  if [[ "$STU_MET" == "True" ]]; then
+  if [[ "$IS_EXEMPT" == "True" ]]; then
+    echo -e "  ${GREEN}[✓]${NC} STU self-stake            (exempt — admin override)"
+  elif [[ "$STU_MET" == "True" ]]; then
     echo -e "  ${GREEN}[✓]${NC} 500,000 STU self-stake   (staked: ${STU_STAKED} STU)"
   else
     echo -e "  ${RED}[✗]${NC} 500,000 STU self-stake   (staked: ${STU_STAKED} STU — insufficient)"
