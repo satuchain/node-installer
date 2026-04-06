@@ -245,7 +245,7 @@ print_banner() {
   echo "  ███████║██║  ██║   ██║   ╚██████╔╝╚██████╗██║  ██║██║  ██║██║██║ ╚████║"
   echo "  ╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝"
   echo -e "${NC}"
-  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v2.1.8${NC}"
+  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v2.1.9${NC}"
   echo -e "  Chain ID: ${CYAN}$CHAIN_ID${NC}  •  APoS Consensus  •  Docker-based"
   echo ""
 }
@@ -732,13 +732,18 @@ setup_account() {
         echo "$PRIVKEY" > "$SECURE_TMP/.pk"
         echo "$KEYSTORE_PASSWORD" > "$SECURE_TMP/.pw"
         chmod 600 "$SECURE_TMP/.pk" "$SECURE_TMP/.pw"
-        docker run --rm \
+        IMPORT_OUT=$(docker run --rm \
           -v "$KEYSTORE_DIR:/keystore" \
           -v "$SECURE_TMP/.pk:/tmp/pk.txt:ro" \
           -v "$SECURE_TMP/.pw:/tmp/pw.txt:ro" \
           "$BSC_IMAGE" \
-          account import --keystore /keystore --password /tmp/pw.txt /tmp/pk.txt \
-          2>/dev/null
+          account import --keystore /keystore --password /tmp/pw.txt /tmp/pk.txt 2>&1)
+        IMPORT_RC=$?
+        if [[ $IMPORT_RC -ne 0 ]]; then
+          echo "$IMPORT_OUT"
+          report_status "keystore" "failed" "Account import failed (exit $IMPORT_RC)"
+          die "Failed to import private key into keystore. Check output above."
+        fi
         # Wipe and remove secure temp
         shred -u "$SECURE_TMP/.pk" "$SECURE_TMP/.pw" 2>/dev/null || rm -f "$SECURE_TMP/.pk" "$SECURE_TMP/.pw"
         rmdir "$SECURE_TMP"
@@ -796,11 +801,16 @@ setup_compose_and_start() {
   # Init genesis data (one-time)
   if [[ ! -d "$DATA_DIR/geth/chaindata" ]]; then
     info "Initializing genesis block..."
-    docker run --rm \
+    GENESIS_OUT=$(docker run --rm \
       -v "$DATA_DIR:/data" \
       -v "$CONFIG_DIR:/config" \
       "$BSC_IMAGE" \
-      init --datadir /data /config/genesis.json 2>/dev/null
+      init --datadir /data /config/genesis.json 2>&1)
+    if [[ $? -ne 0 ]]; then
+      echo "$GENESIS_OUT"
+      report_status "genesis" "failed" "Genesis init failed"
+      die "Genesis initialization failed. Output above. Contact SatuChain admin."
+    fi
     log "Genesis initialized"
   else
     info "Chaindata exists, skipping genesis init"
@@ -822,6 +832,7 @@ services:
       - $KEYSTORE_DIR:/data/keystore
       - $LOG_DIR:/logs
     command:
+      - --datadir=/data
       - --config=/config/config.toml
       - --networkid=$CHAIN_ID
 $([ "$mode" = "validator" ] && echo "      - --mine
@@ -830,10 +841,6 @@ $([ "$mode" = "validator" ] && echo "      - --mine
       - --password=/config/password.txt")
       - --bootnodes=$BOOTNODE
       - --verbosity=3
-      - --log.file=/logs/geth.log
-      - --log.rotate=true
-      - --log.maxsize=100
-      - --log.maxbackups=7
 COMPOSE
   }
 
@@ -872,14 +879,23 @@ COMPOSE
     die "$(t compose_fail)"
   fi
 
-  sleep 6
+  sleep 8
   if docker ps --filter "name=$CONTAINER_NAME" --filter "status=running" --format "{{.Names}}" | grep -q "$CONTAINER_NAME"; then
     log "$(t compose_ok)"
     report_status "compose" "done" "Container $CONTAINER_NAME running"
   else
-    COMPOSE_ERR=$(docker compose -f "$COMPOSE_FILE" logs --tail=10 2>&1 | tail -5)
-    report_status "compose" "failed" "Container not running after start: $COMPOSE_ERR"
-    docker compose -f "$COMPOSE_FILE" logs --tail=20
+    echo ""
+    warn "Container tidak running setelah start. Menampilkan log / Container not running. Showing logs:"
+    echo "──────────────────────────────────────────"
+    docker logs "$CONTAINER_NAME" --tail=30 2>&1 || true
+    docker compose -f "$COMPOSE_FILE" logs --tail=30 2>&1 || true
+    echo "──────────────────────────────────────────"
+    echo ""
+    # Show all containers (including exited)
+    warn "docker ps -a output:"
+    docker ps -a 2>&1 || true
+    COMPOSE_ERR=$(docker logs "$CONTAINER_NAME" 2>&1 | tail -3 || docker compose -f "$COMPOSE_FILE" logs --tail=3 2>&1)
+    report_status "compose" "failed" "Container not running: $COMPOSE_ERR"
     die "$(t compose_fail)"
   fi
 
