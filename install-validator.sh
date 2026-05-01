@@ -455,8 +455,6 @@ validate_key() {
     "import json,sys; d=json.load(sys.stdin); print(d['requirements']['stu']['met'])" 2>/dev/null || echo "False")
   STU_STAKED=$(echo "$REQ_RESPONSE" | python3 -c \
     "import json,sys; d=json.load(sys.stdin); print(d['requirements']['stu']['staked'])" 2>/dev/null || echo "0")
-  USDT_MET=$(echo "$REQ_RESPONSE" | python3 -c \
-    "import json,sys; d=json.load(sys.stdin); print(d['requirements']['usdt']['met'])" 2>/dev/null || echo "False")
   ADMIN_MET=$(echo "$REQ_RESPONSE" | python3 -c \
     "import json,sys; d=json.load(sys.stdin); print(d['requirements']['adminApproved']['met'])" 2>/dev/null || echo "False")
 
@@ -477,15 +475,9 @@ validate_key() {
   if [[ "$IS_EXEMPT" == "True" ]]; then
     echo -e "  ${GREEN}[✓]${NC} STU self-stake            (exempt — admin override)"
   elif [[ "$STU_MET" == "True" ]]; then
-    echo -e "  ${GREEN}[✓]${NC} 500,000 STU self-stake   (staked: ${STU_STAKED} STU)"
+    echo -e "  ${GREEN}[✓]${NC} 2,000,000 STU self-stake (staked: ${STU_STAKED} STU — auto-detected on-chain)"
   else
-    echo -e "  ${RED}[✗]${NC} 500,000 STU self-stake   (staked: ${STU_STAKED} STU — insufficient)"
-  fi
-
-  if [[ "$USDT_MET" == "True" ]]; then
-    echo -e "  ${GREEN}[✓]${NC} 2,000 USDT deposit       (verified by admin)"
-  else
-    echo -e "  ${RED}[✗]${NC} 2,000 USDT deposit       (not yet verified — contact SatuChain admin)"
+    echo -e "  ${RED}[✗]${NC} 2,000,000 STU self-stake (staked: ${STU_STAKED} STU — insufficient, need 2,000,000)"
   fi
 
   if [[ "$ADMIN_MET" == "True" ]]; then
@@ -497,7 +489,7 @@ validate_key() {
   echo ""
 
   [[ "$CAN_INSTALL" == "True" ]] \
-    || die "Requirements not met. Complete all 3 requirements above, then re-run this installer."
+    || die "Requirements not met. Complete the requirements above, then re-run this installer."
 
   log "All requirements verified — proceeding with installation"
 

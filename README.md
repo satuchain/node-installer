@@ -7,9 +7,9 @@ Official installer for running a validator node on **SatuChain Mainnet** (Chain 
 Before running the installer, make sure you have:
 
 1. **Register at the dashboard** → [staking.satuchain.com](https://staking.satuchain.com)
-2. **Stake a minimum of 500,000 STU** via the dashboard
-3. **Verify USDT payment** with the admin
-4. **Receive your Validator Key** (`satu-val-...`) from the admin once all requirements are met
+2. **Self-stake a minimum of 2,000,000 STU** on SatuChain Mainnet (auto-detected on-chain by the dashboard — no manual proof needed)
+3. **Submit your server profile** via the dashboard (location, provider, IP, contact)
+4. **Receive your Validator Key** (`satu-val-...`) from the admin once your stake is verified
 
 > The installer **will not run** without a valid Validator Key from the admin.
 
