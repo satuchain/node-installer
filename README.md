@@ -38,10 +38,10 @@ Pick a plan that meets the **Recommended** column (4 vCPU / 4 GB+ RAM / 100 GB S
 | IDCloudHost | Cloud VPS Pro | 4 vCPU / 4 GB / 80 GB SSD | ~Rp 200K/mo | 🇮🇩 Jakarta / Surabaya |
 | BizNet Gio | Cloud VM | 4 vCPU / 4 GB / 80 GB SSD | ~Rp 250K/mo | 🇮🇩 Jakarta |
 
-> **Tips memilih:**
-> - Pilih region terdekat dengan validator lain biar latency P2P kecil — saat ini bootnode SatuChain di EU/Asia.
-> - Untuk validator Indonesia, IDCloudHost / BizNet Gio recommended (latency rendah ke bootnode regional, support lokal).
-> - Hindari plan shared/burstable CPU yang aggresif throttle — bisa bikin block production telat dan kena slash.
+> **Tips for picking a provider:**
+> - Choose a region close to other validators to keep P2P latency low — SatuChain bootnodes are currently in EU / Asia.
+> - For Indonesian validators, IDCloudHost or BizNet Gio are recommended (low latency to the regional bootnode, local support).
+> - Avoid shared / burstable CPU plans with aggressive throttling — they can delay block production and trigger slashing.
 
 ## Installation
 
