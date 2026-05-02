@@ -28,11 +28,20 @@ Before running the installer, make sure you have:
 
 ### Recommended VPS Providers
 
-| Provider | Plan | Spec | Price |
-|----------|------|------|-------|
-| Hetzner | CPX21 | 3 vCPU / 4 GB / 80 GB | ~€6/mo |
-| DigitalOcean | Basic | 2 vCPU / 2 GB / 60 GB | ~$18/mo |
-| Contabo | VPS S | 4 vCPU / 4 GB / 100 GB | ~$7/mo |
+Pick a plan that meets the **Recommended** column (4 vCPU / 4 GB+ RAM / 100 GB SSD). Prices below are reference only — check the provider for current pricing.
+
+| Provider | Plan | Spec | Price | Region |
+|----------|------|------|-------|--------|
+| Hetzner | CPX21 | 3 vCPU / 4 GB / 80 GB SSD | ~€6/mo | EU / US |
+| Contabo | VPS S | 4 vCPU / 8 GB / 200 GB SSD | ~$8.49/mo | EU / US / Asia |
+| Vultr | High Frequency | 2 vCPU / 4 GB / 128 GB NVMe | ~$24/mo | Global incl. SG/JP |
+| IDCloudHost | Cloud VPS Pro | 4 vCPU / 4 GB / 80 GB SSD | ~Rp 200K/mo | 🇮🇩 Jakarta / Surabaya |
+| BizNet Gio | Cloud VM | 4 vCPU / 4 GB / 80 GB SSD | ~Rp 250K/mo | 🇮🇩 Jakarta |
+
+> **Tips memilih:**
+> - Pilih region terdekat dengan validator lain biar latency P2P kecil — saat ini bootnode SatuChain di EU/Asia.
+> - Untuk validator Indonesia, IDCloudHost / BizNet Gio recommended (latency rendah ke bootnode regional, support lokal).
+> - Hindari plan shared/burstable CPU yang aggresif throttle — bisa bikin block production telat dan kena slash.
 
 ## Installation
 

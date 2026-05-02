@@ -42,7 +42,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.2.0"
+INSTALLER_VERSION="2.3.1"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -275,9 +275,10 @@ check_requirements() {
     echo -e "  Required : ${GREEN}${REQ_CPU} vCPU minimum${NC}"
     echo -e "  Recommended : ${GREEN}4 vCPU${NC} for stable long-term operation"
     echo ""
-    echo -e "  ${YELLOW}→ Solution: Upgrade your VPS to at least 2 vCPU${NC}"
-    echo -e "  ${YELLOW}  Example: DigitalOcean Basic 2vCPU (\$18/mo)${NC}"
-    echo -e "  ${YELLOW}           Hetzner CPX11 2vCPU (€4.5/mo)${NC}"
+    echo -e "  ${YELLOW}→ Solution: Upgrade your VPS to at least 2 vCPU (recommended 4 vCPU)${NC}"
+    echo -e "  ${YELLOW}  Examples: Hetzner CPX21 (3vCPU/4GB ~€6/mo)${NC}"
+    echo -e "  ${YELLOW}            Contabo VPS S (4vCPU/8GB ~\$8.49/mo)${NC}"
+    echo -e "  ${YELLOW}            IDCloudHost / BizNet Gio (4vCPU/4GB, regional ID)${NC}"
     echo ""
     die "CPU insufficient: ${CPU} vCPU < ${REQ_CPU} vCPU required"
   fi
@@ -379,7 +380,7 @@ check_requirements() {
   if [[ $warn_shown -eq 1 ]]; then
     echo ""
     echo -e "  ${YELLOW}▸ Minimum met. Best performance: 4 vCPU / 4 GB RAM / 100 GB SSD${NC}"
-    echo -e "  ${YELLOW}  Recommended VPS: Hetzner CPX21 €6/mo · DO 2GB \$18/mo · Contabo VPS S \$7/mo${NC}"
+    echo -e "  ${YELLOW}  Recommended VPS: Hetzner CPX21 €6/mo · Contabo VPS S \$8.49/mo · IDCloudHost ~Rp 200K/mo${NC}"
     echo ""
   fi
 }
