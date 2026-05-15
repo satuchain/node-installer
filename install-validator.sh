@@ -45,7 +45,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.4.2"
+INSTALLER_VERSION="2.4.3"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -831,15 +831,31 @@ setup_account() {
         echo "$PRIVKEY" > "$SECURE_TMP/.pk"
         echo "$KEYSTORE_PASSWORD" > "$SECURE_TMP/.pw"
         chmod 600 "$SECURE_TMP/.pk" "$SECURE_TMP/.pw"
-        IMPORT_OUT=$(docker run --rm \
+
+        # Pre-pull image so user sees progress (first run is ~100MB).
+        # Without this, the `docker run` below pulls silently and a slow/failed
+        # pull looks like the installer hangs or exits silently under set -e.
+        info "Pulling validator node image (~100MB, first time only)..."
+        set +e
+        docker pull "$BSC_IMAGE"
+        PULL_RC=$?
+        set -e
+        if [[ $PULL_RC -ne 0 ]]; then
+          report_status "keystore" "failed" "docker pull $BSC_IMAGE failed (exit $PULL_RC)"
+          die "Failed to pull $BSC_IMAGE. Check internet + 'docker pull $BSC_IMAGE' manually."
+        fi
+
+        info "Importing private key into keystore..."
+        set +e
+        docker run --rm \
           -v "$KEYSTORE_DIR:/keystore" \
           -v "$SECURE_TMP/.pk:/tmp/pk.txt:ro" \
           -v "$SECURE_TMP/.pw:/tmp/pw.txt:ro" \
           "$BSC_IMAGE" \
-          account import --keystore /keystore --password /tmp/pw.txt /tmp/pk.txt 2>&1)
+          account import --keystore /keystore --password /tmp/pw.txt /tmp/pk.txt
         IMPORT_RC=$?
+        set -e
         if [[ $IMPORT_RC -ne 0 ]]; then
-          echo "$IMPORT_OUT"
           report_status "keystore" "failed" "Account import failed (exit $IMPORT_RC)"
           die "Failed to import private key into keystore. Check output above."
         fi
