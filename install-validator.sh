@@ -45,7 +45,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.4.8"
+INSTALLER_VERSION="2.4.9"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -489,9 +489,20 @@ check_connectivity() {
 validate_key() {
   step "$(t step_key)"
 
-  # Resume short-circuit — skip re-prompting key + re-hitting API
+  # Resume short-circuit — skip prompts but still refresh BOOTNODE from server
   if [[ "$RESUMING" == "true" ]] && [[ -n "$VALIDATOR_ADDRESS" ]] && [[ -n "$VALIDATOR_KEY" ]]; then
-    info "Resuming — using stored key for $VALIDATOR_ADDRESS"
+    info "Resuming — refreshing bootnode for $VALIDATOR_ADDRESS"
+    local resp fresh_boot
+    resp=$($CURL_API -s --max-time 10 -X POST "$API_BASE/validate-key" \
+      -H "Content-Type: application/json" \
+      -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\"}" 2>/dev/null || echo "")
+    fresh_boot=$(echo "$resp" | python3 -c \
+      "import json,sys; print(json.load(sys.stdin).get('bootnode',''))" 2>/dev/null || echo "")
+    if [[ -n "$fresh_boot" ]] && [[ "$fresh_boot" != "$BOOTNODE" ]]; then
+      info "BOOTNODE updated from server"
+      BOOTNODE="$fresh_boot"
+      save_state "BOOTNODE" "$BOOTNODE"
+    fi
     return 0
   fi
 
