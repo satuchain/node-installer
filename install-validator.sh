@@ -45,7 +45,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.4.4"
+INSTALLER_VERSION="2.4.5"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -830,7 +830,9 @@ setup_account() {
         chmod 700 "$SECURE_TMP"
         echo "$PRIVKEY" > "$SECURE_TMP/.pk"
         echo "$KEYSTORE_PASSWORD" > "$SECURE_TMP/.pw"
-        chmod 600 "$SECURE_TMP/.pk" "$SECURE_TMP/.pw"
+        # 644 so container UID 1000 can read via bind-mount.
+        # Dir is 700 on host so others still can't traverse here.
+        chmod 644 "$SECURE_TMP/.pk" "$SECURE_TMP/.pw"
 
         # Pre-pull image so user sees progress (first run is ~100MB).
         # Without this, the `docker run` below pulls silently and a slow/failed
@@ -848,9 +850,12 @@ setup_account() {
         info "Importing private key into keystore..."
         # Override entrypoint: image's docker-entrypoint.sh reads /bsc/config/config.toml
         # which doesn't exist yet during install. Call geth directly to skip that.
+        # --user root: container's default UID 1000 can't read /tmp/pk.txt (root-owned)
+        # or write to /keystore (root-owned on host). Runtime container runs as 1000 normally.
         set +e
         docker run --rm \
           --entrypoint geth \
+          --user root \
           -v "$KEYSTORE_DIR:/keystore" \
           -v "$SECURE_TMP/.pk:/tmp/pk.txt:ro" \
           -v "$SECURE_TMP/.pw:/tmp/pw.txt:ro" \
@@ -858,6 +863,10 @@ setup_account() {
           account import --keystore /keystore --password /tmp/pw.txt /tmp/pk.txt
         IMPORT_RC=$?
         set -e
+
+        # If running as root in container, the created UTC-* file will be owned by root.
+        # Runtime container is UID 1000, so fix ownership.
+        chown -R 1000:1000 "$KEYSTORE_DIR" 2>/dev/null || true
         if [[ $IMPORT_RC -ne 0 ]]; then
           report_status "keystore" "failed" "Account import failed (exit $IMPORT_RC)"
           die "Failed to import private key into keystore. Check output above."
