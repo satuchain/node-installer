@@ -789,7 +789,8 @@ setup_account() {
         echo -e "${BOLD}Password keystore:${NC}"
         echo -e "  ${GREEN}[1]${NC} Auto-generate (recommended — disimpan di /opt/satuchain-validator/.state)"
         echo -e "  ${BOLD}[2]${NC} Set sendiri / Set manually"
-        read -r -p "  [1/2]: " PW_METHOD 2>/dev/null
+        echo -en "  [1/2]: "
+        read -r PW_METHOD || PW_METHOD="1"
         PW_METHOD="${PW_METHOD:-1}"
 
         if [[ "$PW_METHOD" == "1" ]]; then
