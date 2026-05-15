@@ -45,7 +45,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.4.6"
+INSTALLER_VERSION="2.4.7"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -724,6 +724,10 @@ setup_account() {
   step "$(t step_account)"
   report_status "keystore" "started" "Setting up validator keystore..."
 
+  # Default — overridden below when picking new password method.
+  # Required so set -u doesn't crash on existing-keystore + summary paths.
+  KEYSTORE_PASSWORD_AUTO=false
+
   ADDR_LOWER=$(echo "$VALIDATOR_ADDRESS" | tr '[:upper:]' '[:lower:]' | sed 's/^0x//')
   EXISTING=$(find "$KEYSTORE_DIR" -iname "*${ADDR_LOWER}*" 2>/dev/null | head -1 || true)
 
@@ -735,6 +739,7 @@ setup_account() {
     saved_pw=$(load_state KEYSTORE_PASSWORD)
     if [[ "$saved_auto" == "true" ]] && [[ -n "$saved_pw" ]]; then
       KEYSTORE_PASSWORD="$saved_pw"
+      KEYSTORE_PASSWORD_AUTO=true
       log "Using stored auto-password (from previous install)"
     else
       echo -e "${BOLD}$(t account_exist_pw)${NC}"
