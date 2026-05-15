@@ -45,7 +45,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.4.1"
+INSTALLER_VERSION="2.4.2"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -794,8 +794,9 @@ setup_account() {
         PW_METHOD="${PW_METHOD:-1}"
 
         if [[ "$PW_METHOD" == "1" ]]; then
-          # 32-char random alphanumeric password
-          KEYSTORE_PASSWORD=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)
+          # 32-char random hex password — openssl avoids tr|head SIGPIPE under pipefail
+          KEYSTORE_PASSWORD=$(openssl rand -hex 16 2>/dev/null \
+            || { dd if=/dev/urandom bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'; })
           KEYSTORE_PASSWORD_AUTO=true
           echo -e "  ${GREEN}✓${NC} Auto-generated 32-char password"
         else
