@@ -45,7 +45,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.4.3"
+INSTALLER_VERSION="2.4.4"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -846,8 +846,11 @@ setup_account() {
         fi
 
         info "Importing private key into keystore..."
+        # Override entrypoint: image's docker-entrypoint.sh reads /bsc/config/config.toml
+        # which doesn't exist yet during install. Call geth directly to skip that.
         set +e
         docker run --rm \
+          --entrypoint geth \
           -v "$KEYSTORE_DIR:/keystore" \
           -v "$SECURE_TMP/.pk:/tmp/pk.txt:ro" \
           -v "$SECURE_TMP/.pw:/tmp/pw.txt:ro" \
