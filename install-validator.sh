@@ -45,7 +45,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.4.7"
+INSTALLER_VERSION="2.4.8"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -974,6 +974,9 @@ services:
     container_name: $CONTAINER_NAME
     restart: unless-stopped
     network_mode: host
+    # Bypass image's docker-entrypoint.sh which cats /bsc/config/config.toml
+    # (we mount our config at /config/, not /bsc/config/). Run geth directly.
+    entrypoint: ["geth"]
     volumes:
       - $DATA_DIR:/data
       - $CONFIG_DIR:/config
