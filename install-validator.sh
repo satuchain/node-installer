@@ -45,7 +45,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.4.9"
+INSTALLER_VERSION="2.5.0"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -1026,6 +1026,31 @@ COMPOSE
     die "$(t compose_fail)"
   fi
   report_status "pull" "done" "Image pulled successfully"
+
+  # Pre-flight: ensure ports geth needs (8545/8546/30303) are free.
+  # Compose uses network_mode=host, so the container binds directly to host.
+  # If a previous crashed container or stale process still holds 8545,
+  # `docker compose up` succeeds but geth dies with "bind: address already in use".
+  info "Checking for port conflicts (8545/8546/30303)..."
+  # First: force-remove any old satuchain-validator container in whatever state
+  docker rm -f satuchain-validator 2>/dev/null || true
+  # Then: kill stale geth processes started by old crashed containers.
+  # These are usually orphaned (re-parented to init) after docker rm -f.
+  STALE_GETH=$(pgrep -f "^geth " 2>/dev/null || true)
+  if [[ -n "$STALE_GETH" ]]; then
+    warn "Killing stale geth process(es): $STALE_GETH"
+    # shellcheck disable=SC2086
+    kill -9 $STALE_GETH 2>/dev/null || true
+    sleep 1
+  fi
+  # Re-verify port — if STILL in use, it's something else and we should NOT touch it.
+  PORT_HOLDER=$(ss -tlnp 2>/dev/null | awk '$4 ~ /:8545$/ {print $NF; exit}')
+  if [[ -n "$PORT_HOLDER" ]]; then
+    report_status "compose" "failed" "Port 8545 already in use by $PORT_HOLDER"
+    warn "Port 8545 is bound by another process: $PORT_HOLDER"
+    warn "Inspect with: sudo ss -tlnp '( sport = :8545 )'"
+    die "Cannot start validator — release port 8545 first, then re-run installer."
+  fi
 
   # Phase 1: Start in sync-only mode
   info "$(t compose_start)"
