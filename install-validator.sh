@@ -29,6 +29,9 @@ die()   { echo -e "${RED}[✗] ERROR:${NC} $*"; exit 1; }
 
 # ── Constants ────────────────────────────────────────────────
 CHAIN_ID=10111945
+# Force IPv4 for all API calls — server-side IP whitelist tracks IPv4 only,
+# and many residential/VPS IPv6 prefixes rotate so they cannot be whitelisted stably.
+CURL_API="curl --ipv4"
 API_BASE="https://staking.satuchain.com/api"
 RPC_PUBLIC="https://rpc-mainnet.satuchain.com"
 BOOTNODE=""  # fetched from API during install
@@ -42,7 +45,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.3.2"
+INSTALLER_VERSION="2.4.0"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -55,7 +58,59 @@ REQ_DISK_GB=15
 
 # ── State helpers ────────────────────────────────────────────
 save_state() { echo "$1=$2" >> "$STATE_FILE"; }
-load_state()  { grep "^$1=" "$STATE_FILE" 2>/dev/null | cut -d= -f2- || true; }
+load_state()  { grep "^$1=" "$STATE_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true; }
+RESUMING=false
+
+# ── Resume detection ─────────────────────────────────────────
+# If a previous install exists, offer to skip key re-entry + already-done steps.
+detect_resume() {
+  [[ ! -f "$STATE_FILE" ]] && return 0
+  local prev_addr prev_key
+  prev_addr=$(load_state VALIDATOR_ADDRESS)
+  prev_key=$(load_state VALIDATOR_KEY)
+  [[ -z "$prev_addr" || -z "$prev_key" ]] && return 0
+
+  echo ""
+  echo -e "${YELLOW}┌─────────────────────────────────────────────────────┐${NC}"
+  echo -e "${YELLOW}│${NC}  Previous install detected / Install sebelumnya     ${YELLOW}│${NC}"
+  echo -e "${YELLOW}└─────────────────────────────────────────────────────┘${NC}"
+  echo -e "  Address : ${CYAN}${prev_addr}${NC}"
+  echo -e "  Key     : ${CYAN}${prev_key:0:24}...${NC}"
+  echo ""
+  echo -e "  ${BOLD}Progress:${NC}"
+  [[ -f "$CONFIG_DIR/genesis.json" ]] \
+    && echo -e "    ${GREEN}✓${NC} Genesis downloaded" \
+    || echo -e "    ${YELLOW}•${NC} Genesis pending"
+  if [[ -d "$KEYSTORE_DIR" ]] && [[ -n "$(ls -A "$KEYSTORE_DIR" 2>/dev/null)" ]]; then
+    echo -e "    ${GREEN}✓${NC} Keystore exists"
+  else
+    echo -e "    ${YELLOW}•${NC} Keystore pending"
+  fi
+  if docker ps --filter "name=satuchain-validator" --filter "status=running" \
+       --format "{{.Names}}" 2>/dev/null | grep -q satuchain-validator; then
+    echo -e "    ${GREEN}✓${NC} Container running"
+  else
+    echo -e "    ${YELLOW}•${NC} Container not running"
+  fi
+  echo ""
+  local choice
+  read -r -p "  Resume install? [Y/n]: " choice 2>/dev/null
+  choice="${choice:-Y}"
+  if [[ "$choice" =~ ^[Yy] ]]; then
+    VALIDATOR_ADDRESS="$prev_addr"
+    VALIDATOR_KEY="$prev_key"
+    PUBLIC_IP=$(load_state PUBLIC_IP)
+    SERVER_ID=$(load_state SERVER_ID)
+    BOOTNODE=$(load_state BOOTNODE)
+    VALIDATOR_NAME=$(load_state VALIDATOR_NAME)
+    RESUMING=true
+    log "Resuming install for $VALIDATOR_ADDRESS"
+  else
+    info "Starting fresh install — clearing state"
+    rm -f "$STATE_FILE"
+    RESUMING=false
+  fi
+}
 
 # ── Language ─────────────────────────────────────────────────
 LANG_MODE="en"
@@ -231,7 +286,7 @@ report_status() {
   local msg="${3:-}"
   # VALIDATOR_ADDRESS may not be set yet at early steps — skip silently
   [[ -z "${VALIDATOR_ADDRESS:-}" ]] && return 0
-  curl -s --max-time 5 -X POST "$API_BASE/node-install-log" \
+  $CURL_API -s --max-time 5 -X POST "$API_BASE/node-install-log" \
     -H "Content-Type: application/json" \
     -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"step\":\"$step\",\"status\":\"$status\",\"msg\":\"$msg\"}" \
     >/dev/null 2>&1 || true
@@ -398,7 +453,7 @@ check_connectivity() {
     || { warn "$(t conn_no_inet)"; FAILED=$(( FAILED + 1 )); }
 
   # Staking API
-  curl -s --max-time 10 "$API_BASE/health" 2>/dev/null | python3 -c \
+  $CURL_API -s --max-time 10 "$API_BASE/health" 2>/dev/null | python3 -c \
     "import json,sys; assert json.load(sys.stdin).get('ok')" 2>/dev/null \
     && log "Staking API OK" \
     || { warn "$(t conn_api_fail): $API_BASE/health"; FAILED=$(( FAILED + 1 )); }
@@ -432,6 +487,12 @@ check_connectivity() {
 # ════════════════════════════════════════════════════════════
 validate_key() {
   step "$(t step_key)"
+
+  # Resume short-circuit — skip re-prompting key + re-hitting API
+  if [[ "$RESUMING" == "true" ]] && [[ -n "$VALIDATOR_ADDRESS" ]] && [[ -n "$VALIDATOR_KEY" ]]; then
+    info "Resuming — using stored key for $VALIDATOR_ADDRESS"
+    return 0
+  fi
 
   echo -e "${BOLD}$(t key_prompt_addr)${NC}"
   read -r VALIDATOR_ADDRESS 2>/dev/null || die "No input"
@@ -502,12 +563,12 @@ validate_key() {
     || die "$(t key_invalid_fmt): key must start with satu-val-"
 
   SERVER_ID=$(cat /etc/machine-id 2>/dev/null || hostname | md5sum | cut -c1-16)
-  PUBLIC_IP=$(curl -sf https://api.ipify.org --max-time 10 2>/dev/null \
-           || curl -sf https://ifconfig.me --max-time 10 2>/dev/null \
+  PUBLIC_IP=$(curl -4 -sf https://api.ipify.org --max-time 10 2>/dev/null \
+           || curl -4 -sf https://ifconfig.me --max-time 10 2>/dev/null \
            || echo "unknown")
 
   info "Validating with SatuChain server..."
-  RESPONSE=$(curl -s --max-time 15 -X POST "$API_BASE/validate-key" \
+  RESPONSE=$($CURL_API -s --max-time 15 -X POST "$API_BASE/validate-key" \
     -H "Content-Type: application/json" \
     -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\",\"serverId\":\"$SERVER_ID\",\"serverIp\":\"$PUBLIC_IP\"}" \
     2>/dev/null) || die "Cannot reach SatuChain API"
@@ -535,11 +596,12 @@ validate_key() {
     "import json,sys; print(json.load(sys.stdin).get('bootnode',''))" 2>/dev/null || echo "")
   [[ -z "$BOOTNODE" ]] && die "Cannot retrieve network bootnode from server"
 
-  # Save state
+  # Save state — overwrite cleanly with this run's credentials
   mkdir -p "$INSTALL_DIR"
-  > "$STATE_FILE"
+  : > "$STATE_FILE"
   save_state "VALIDATOR_ADDRESS" "$VALIDATOR_ADDRESS"
   save_state "VALIDATOR_KEY"     "$VALIDATOR_KEY"
+  save_state "VALIDATOR_NAME"    "$VALIDATOR_NAME"
   save_state "SERVER_ID"         "$SERVER_ID"
   save_state "PUBLIC_IP"         "$PUBLIC_IP"
   save_state "VALIDATED_AT"      "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -598,7 +660,7 @@ setup_genesis() {
 
   info "$(t genesis_dl)"
   report_status "genesis" "started" "Downloading genesis block..."
-  curl -sfL "$API_BASE/genesis" --max-time 30 -o "$CONFIG_DIR/genesis.json" 2>/dev/null \
+  $CURL_API -sfL "$API_BASE/genesis" --max-time 30 -o "$CONFIG_DIR/genesis.json" 2>/dev/null \
     || { report_status "genesis" "failed" "Failed to download genesis from $API_BASE"; die "$(t genesis_fail)"; }
 
   # Verify chain ID
@@ -666,8 +728,18 @@ setup_account() {
 
   if [[ -n "$EXISTING" ]]; then
     info "$(t account_exists)"
-    echo -e "${BOLD}$(t account_exist_pw)${NC}"
-    read -r -s KEYSTORE_PASSWORD 2>/dev/null; echo ""
+    # If we have an auto-saved password from previous run, reuse it silently
+    local saved_pw saved_auto
+    saved_auto=$(load_state KEYSTORE_PASSWORD_AUTO)
+    saved_pw=$(load_state KEYSTORE_PASSWORD)
+    if [[ "$saved_auto" == "true" ]] && [[ -n "$saved_pw" ]]; then
+      KEYSTORE_PASSWORD="$saved_pw"
+      log "Using stored auto-password (from previous install)"
+    else
+      echo -e "${BOLD}$(t account_exist_pw)${NC}"
+      read -r -s KEYSTORE_PASSWORD 2>/dev/null; echo ""
+      KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD%$'\r'}"
+    fi
   else
     # Explanation box
     echo ""
@@ -710,17 +782,45 @@ setup_account() {
           echo -e "${RED}    Must be: 0x + 64 hex characters (66 chars total)${NC}"
           echo -e "${BOLD}$(t account_pk)${NC}"
         done
-        while true; do
-          echo -e "${BOLD}$(t account_pw)${NC}"
-          read -r -s KEYSTORE_PASSWORD; echo ""
-          echo -e "${BOLD}$(t account_pw2)${NC}"
-          read -r -s KP2; echo ""
-          if [[ "$KEYSTORE_PASSWORD" == "$KP2" ]]; then
-            break
-          fi
-          echo -e "${RED}  ✗ $(t account_pw_err) — coba lagi / try again${NC}"
-          echo ""
-        done
+
+        # Password method — auto-generate (default, recommended) or manual
+        echo ""
+        echo -e "${BOLD}Password keystore:${NC}"
+        echo -e "  ${GREEN}[1]${NC} Auto-generate (recommended — disimpan di /opt/satuchain-validator/.state)"
+        echo -e "  ${BOLD}[2]${NC} Set sendiri / Set manually"
+        read -r -p "  [1/2]: " PW_METHOD 2>/dev/null
+        PW_METHOD="${PW_METHOD:-1}"
+
+        if [[ "$PW_METHOD" == "1" ]]; then
+          # 32-char random alphanumeric password
+          KEYSTORE_PASSWORD=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)
+          KEYSTORE_PASSWORD_AUTO=true
+          echo -e "  ${GREEN}✓${NC} Auto-generated 32-char password"
+        else
+          KEYSTORE_PASSWORD_AUTO=false
+          while true; do
+            echo -e "${BOLD}$(t account_pw)${NC}"
+            read -r -s KEYSTORE_PASSWORD; echo ""
+            KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD%$'\r'}"
+            if [[ -z "$KEYSTORE_PASSWORD" ]]; then
+              echo -e "${RED}  ✗ Password kosong — coba lagi / empty, try again${NC}"
+              continue
+            fi
+            if [[ ${#KEYSTORE_PASSWORD} -lt 8 ]]; then
+              echo -e "${YELLOW}  ! Password minimal 8 karakter / minimum 8 chars${NC}"
+              continue
+            fi
+            echo -e "${BOLD}$(t account_pw2)${NC}"
+            read -r -s KP2; echo ""
+            KP2="${KP2%$'\r'}"
+            if [[ "$KEYSTORE_PASSWORD" == "$KP2" ]]; then
+              break
+            fi
+            echo -e "${RED}  ✗ $(t account_pw_err) (len: ${#KEYSTORE_PASSWORD} vs ${#KP2}) — coba lagi / try again${NC}"
+            echo -e "${YELLOW}    Tip: jangan copy-paste, ketik manual. Cek caps lock + layout keyboard.${NC}"
+            echo ""
+          done
+        fi
 
         # Use Docker to import — secure tmpdir (mode 700, not world-readable /tmp)
         SECURE_TMP=$(mktemp -d)
@@ -760,6 +860,13 @@ setup_account() {
 
   echo "$KEYSTORE_PASSWORD" > "$CONFIG_DIR/password.txt"
   chmod 600 "$CONFIG_DIR/password.txt"
+
+  # Persist auto-generated password into state for resume (manual passwords NOT saved)
+  if [[ "$KEYSTORE_PASSWORD_AUTO" == "true" ]]; then
+    save_state "KEYSTORE_PASSWORD" "$KEYSTORE_PASSWORD"
+    save_state "KEYSTORE_PASSWORD_AUTO" "true"
+  fi
+
   log "$(t account_ok)"
   report_status "keystore" "done" "Keystore ready for $VALIDATOR_ADDRESS"
 }
@@ -961,7 +1068,7 @@ COMPOSE
   sleep 6
 
   # Confirm activation to API
-  curl -s --max-time 10 -X POST "$API_BASE/node-activated" \
+  $CURL_API -s --max-time 10 -X POST "$API_BASE/node-activated" \
     -H "Content-Type: application/json" \
     -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\"}" > /dev/null 2>&1
 
@@ -1043,7 +1150,7 @@ fi
 log_m "block=$LOCAL_BLOCK chain=$CHAIN_BLOCK gap=$SYNC_GAP peers=$PEER_COUNT lat=${LATENCY}ms online=$NODE_ONLINE"
 
 # ── Push health to dashboard (for charts) ────────────────────
-PUSH=$(curl -s --max-time 15 -X POST "$API_BASE/node-health-push" \
+PUSH=$(curl --ipv4 -s --max-time 15 -X POST "$API_BASE/node-health-push" \
   -H "Content-Type: application/json" \
   -d "{
     \"address\":\"$VALIDATOR_ADDRESS\",
@@ -1064,7 +1171,7 @@ echo "$PUSH" | python3 -c "import json,sys; assert json.load(sys.stdin).get('ok'
   || log_m "WARN: health push failed — $PUSH"
 
 # ── Update metadata ───────────────────────────────────────────
-curl -s --max-time 15 -X POST "$API_BASE/validator-info" \
+curl --ipv4 -s --max-time 15 -X POST "$API_BASE/validator-info" \
   -H "Content-Type: application/json" \
   -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\",\"info\":{\"serverIp\":\"$PUBLIC_IP\",\"enode\":\"$ENODE\",\"lastPing\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}" \
   > /dev/null 2>&1
@@ -1073,7 +1180,7 @@ curl -s --max-time 15 -X POST "$API_BASE/validator-info" \
 ALREADY_REPORTED=$(load_state REPORTED_READY)
 if [[ "$IS_SYNCED" == "true" && "$ALREADY_REPORTED" != "true" ]]; then
   log_m "Fully synced! Reporting ready to dashboard..."
-  RESULT=$(curl -s --max-time 15 -X POST "$API_BASE/validator-report-ready" \
+  RESULT=$(curl --ipv4 -s --max-time 15 -X POST "$API_BASE/validator-report-ready" \
     -H "Content-Type: application/json" \
     -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\"}" 2>/dev/null)
   if echo "$RESULT" | python3 -c "import json,sys; assert json.load(sys.stdin).get('ok')" 2>/dev/null; then
@@ -1089,7 +1196,7 @@ LAST_CHECK=$(cat "$UPDATE_LOCK" 2>/dev/null || echo "0")
 if (( NOW - LAST_CHECK > 3600 )); then
   echo "$NOW" > "$UPDATE_LOCK"
   # Fetch recommended image from dashboard API
-  LATEST_IMAGE=$(curl -s --max-time 10 "$API_BASE/node-image" 2>/dev/null \
+  LATEST_IMAGE=$(curl --ipv4 -s --max-time 10 "$API_BASE/node-image" 2>/dev/null \
     | python3 -c "import json,sys; print(json.load(sys.stdin).get('image',''))" 2>/dev/null || echo "")
   if [[ -n "$LATEST_IMAGE" ]]; then
     CURRENT_IMAGE=$(grep "image:" "$COMPOSE_FILE" 2>/dev/null | awk '{print $2}' | head -1 || echo "")
@@ -1128,7 +1235,7 @@ MONITOR
 # ════════════════════════════════════════════════════════════
 report_initial() {
   step "$(t step_report)"
-  curl -s --max-time 15 -X POST "$API_BASE/validator-info" \
+  $CURL_API -s --max-time 15 -X POST "$API_BASE/validator-info" \
     -H "Content-Type: application/json" \
     -d "{
       \"address\":\"$VALIDATOR_ADDRESS\",
@@ -1160,6 +1267,12 @@ print_summary() {
   echo -e "  ${BOLD}Server IP :${NC} $PUBLIC_IP"
   echo -e "  ${BOLD}Chain ID  :${NC} $CHAIN_ID"
   echo -e "  ${BOLD}Container :${NC} $CONTAINER_NAME"
+  if [[ "$KEYSTORE_PASSWORD_AUTO" == "true" ]] && [[ -n "$KEYSTORE_PASSWORD" ]]; then
+    echo ""
+    echo -e "  ${YELLOW}${BOLD}⚠ Keystore password (auto-generated — SAVE THIS):${NC}"
+    echo -e "    ${BOLD}$KEYSTORE_PASSWORD${NC}"
+    echo -e "  ${YELLOW}Backup: cat $STATE_FILE | grep KEYSTORE_PASSWORD=${NC}"
+  fi
   echo ""
   echo -e "  ${BOLD}$(t summary_next)${NC}"
   echo -e "  ${CYAN}✓${NC} $(t summary_s1)"
@@ -1214,7 +1327,7 @@ self_update() {
   echo ""
 
   NEW_SCRIPT=$(mktemp /tmp/satuchain-installer-XXXXXX.sh)
-  if curl -fsSL --max-time 30 "$INSTALLER_URL" -o "$NEW_SCRIPT" 2>/dev/null; then
+  if curl --ipv4 -fsSL --max-time 30 "$INSTALLER_URL" -o "$NEW_SCRIPT" 2>/dev/null; then
     chmod +x "$NEW_SCRIPT"
     log "Downloaded v${LATEST_TAG}. Restarting with new version..."
     echo ""
@@ -1234,9 +1347,10 @@ main() {
   print_banner
   self_update "$@"
   select_language
+  detect_resume        # offer resume if previous install exists
   check_requirements   # HARD STOP if specs not met
   check_connectivity
-  validate_key         # SECURITY GATE
+  validate_key         # SECURITY GATE (skipped on resume)
   install_docker       # auto-install if missing
   setup_genesis
   setup_account
