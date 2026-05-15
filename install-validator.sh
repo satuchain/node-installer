@@ -45,7 +45,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.4.5"
+INSTALLER_VERSION="2.4.6"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -935,16 +935,25 @@ setup_compose_and_start() {
   # Init genesis data (one-time)
   if [[ ! -d "$DATA_DIR/geth/chaindata" ]]; then
     info "Initializing genesis block..."
-    GENESIS_OUT=$(docker run --rm \
+    # Same pattern as account import: bypass docker-entrypoint.sh (needs config.toml),
+    # run as root (so geth can write to /data which is root-owned on host),
+    # and wrap with set +e to survive non-zero exit under set -e pipefail.
+    set +e
+    docker run --rm \
+      --entrypoint geth \
+      --user root \
       -v "$DATA_DIR:/data" \
       -v "$CONFIG_DIR:/config" \
       "$BSC_IMAGE" \
-      init --datadir /data /config/genesis.json 2>&1)
-    if [[ $? -ne 0 ]]; then
-      echo "$GENESIS_OUT"
-      report_status "genesis" "failed" "Genesis init failed"
+      init --datadir /data /config/genesis.json
+    GENESIS_RC=$?
+    set -e
+    if [[ $GENESIS_RC -ne 0 ]]; then
+      report_status "genesis" "failed" "Genesis init failed (exit $GENESIS_RC)"
       die "Genesis initialization failed. Output above. Contact SatuChain admin."
     fi
+    # Fix ownership so runtime container (UID 1000) can read+write
+    chown -R 1000:1000 "$DATA_DIR" 2>/dev/null || true
     log "Genesis initialized"
   else
     info "Chaindata exists, skipping genesis init"
