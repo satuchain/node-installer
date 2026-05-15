@@ -94,7 +94,8 @@ detect_resume() {
   fi
   echo ""
   local choice
-  read -r -p "  Resume install? [Y/n]: " choice 2>/dev/null
+  echo -en "  Resume install? [Y/n]: "
+  read -r choice || choice="Y"
   choice="${choice:-Y}"
   if [[ "$choice" =~ ^[Yy] ]]; then
     VALIDATOR_ADDRESS="$prev_addr"
