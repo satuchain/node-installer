@@ -303,7 +303,7 @@ print_banner() {
   echo "  ███████║██║  ██║   ██║   ╚██████╔╝╚██████╗██║  ██║██║  ██║██║██║ ╚████║"
   echo "  ╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝"
   echo -e "${NC}"
-  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v2.2.0${NC}"
+  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v${INSTALLER_VERSION}${NC}"
   echo -e "  Chain ID: ${CYAN}$CHAIN_ID${NC}  •  APoS Consensus  •  Docker-based"
   echo ""
 }
