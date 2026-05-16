@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.5.1"
+INSTALLER_VERSION="2.5.2"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -906,8 +906,17 @@ setup_account() {
     esac
   fi
 
-  echo "$KEYSTORE_PASSWORD" > "$CONFIG_DIR/password.txt"
+  # Use printf (no trailing newline) — geth's password parser treats each line as
+  # a separate password and the trailing \n can be interpreted as an extra account.
+  printf '%s' "$KEYSTORE_PASSWORD" > "$CONFIG_DIR/password.txt"
+  # Container geth runs as UID 1000:1000. Make password + parent dir readable by it,
+  # but keep host filesystem locked down via parent dir traversal:
+  #   /opt/satuchain-validator       root:root 755  (allows traverse only)
+  #   /opt/satuchain-validator/config root:root 755
+  #   /opt/satuchain-validator/config/password.txt 1000:1000 600
+  chown 1000:1000 "$CONFIG_DIR/password.txt"
   chmod 600 "$CONFIG_DIR/password.txt"
+  chmod 755 "$CONFIG_DIR"
 
   # Persist auto-generated password into state for resume (manual passwords NOT saved)
   if [[ "$KEYSTORE_PASSWORD_AUTO" == "true" ]]; then
