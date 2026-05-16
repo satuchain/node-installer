@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.5.4"
+INSTALLER_VERSION="2.5.5"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -61,6 +61,36 @@ REQ_DISK_GB=15
 save_state() { echo "$1=$2" >> "$STATE_FILE"; }
 load_state()  { grep "^$1=" "$STATE_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true; }
 RESUMING=false
+
+# Backend stores bootnode in hostname form (bootnode.satuchain.com) so the public
+# dashboard never exposes raw IPs of validator-1. But geth v1.7.2's enode parser
+# rejects hostname-form URLs ("bad bootstrap node ... missing IP address"), so
+# right before writing config.toml we resolve to literal IP locally.
+resolve_bootnode_to_ip() {
+  local en="$1"
+  # Match enode://<pubkey>@<host>:<port>?...
+  local re='^(enode://[0-9a-fA-F]+@)([^:?]+)(:[0-9]+.*)$'
+  if [[ "$en" =~ $re ]]; then
+    local prefix="${BASH_REMATCH[1]}"
+    local host="${BASH_REMATCH[2]}"
+    local suffix="${BASH_REMATCH[3]}"
+    # If host is already an IP (a.b.c.d or [::1] style), keep as-is.
+    if [[ "$host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$host" =~ ^\[ ]]; then
+      echo "$en"; return 0
+    fi
+    local ip
+    ip=$(getent hosts "$host" 2>/dev/null | awk '{print $1; exit}')
+    if [[ -z "$ip" ]]; then
+      ip=$(dig +short "$host" 2>/dev/null | head -1)
+    fi
+    if [[ -z "$ip" ]]; then
+      echo "$en"; return 0   # fall back to original; verify_peering will warn
+    fi
+    echo "${prefix}${ip}${suffix}"
+  else
+    echo "$en"
+  fi
+}
 
 # ── Resume detection ─────────────────────────────────────────
 # If a previous install exists, offer to skip key re-entry + already-done steps.
@@ -499,10 +529,13 @@ validate_key() {
       -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\"}" 2>/dev/null || echo "")
     fresh_boot=$(echo "$resp" | python3 -c \
       "import json,sys; print(json.load(sys.stdin).get('bootnode',''))" 2>/dev/null || echo "")
-    if [[ -n "$fresh_boot" ]] && [[ "$fresh_boot" != "$BOOTNODE" ]]; then
-      info "BOOTNODE updated from server"
-      BOOTNODE="$fresh_boot"
-      save_state "BOOTNODE" "$BOOTNODE"
+    if [[ -n "$fresh_boot" ]]; then
+      fresh_boot=$(resolve_bootnode_to_ip "$fresh_boot")
+      if [[ "$fresh_boot" != "$BOOTNODE" ]]; then
+        info "BOOTNODE updated from server"
+        BOOTNODE="$fresh_boot"
+        save_state "BOOTNODE" "$BOOTNODE"
+      fi
     fi
     return 0
   fi
@@ -604,10 +637,12 @@ validate_key() {
 
   log "$(t key_ok): $VALIDATOR_ADDRESS"
 
-  # Fetch bootnode from server response (never hardcoded)
+  # Fetch bootnode from server response (never hardcoded). Server returns the
+  # public hostname-form enode; resolve locally so config.toml ends up with IP.
   BOOTNODE=$(echo "$RESPONSE" | python3 -c \
     "import json,sys; print(json.load(sys.stdin).get('bootnode',''))" 2>/dev/null || echo "")
   [[ -z "$BOOTNODE" ]] && die "Cannot retrieve network bootnode from server"
+  BOOTNODE=$(resolve_bootnode_to_ip "$BOOTNODE")
 
   # Save state — overwrite cleanly with this run's credentials
   mkdir -p "$INSTALL_DIR"
