@@ -34,6 +34,7 @@ CHAIN_ID=10111945
 CURL_API="curl --ipv4"
 API_BASE="https://staking.satuchain.com/api"
 RPC_PUBLIC="https://rpc-mainnet.satuchain.com"
+STAKING_CONTRACT_ADDR="0xc7062768b9aD389C2b5F4F7aBD3207689A795296"
 BOOTNODE=""  # fetched from API during install
 INSTALL_DIR="/opt/satuchain-validator"
 KEYSTORE_DIR="$INSTALL_DIR/keystore"
@@ -45,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.5.0"
+INSTALLER_VERSION="2.5.1"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -1123,12 +1124,42 @@ COMPOSE
       die "Node container stopped. Check logs above. Re-run installer after fixing the issue."
     fi
 
-    STATUS=$(curl -s --max-time 10 "$API_BASE/node-status?key=$VALIDATOR_KEY" 2>/dev/null \
+    STATUS=$($CURL_API -s --max-time 10 "$API_BASE/node-status?key=$VALIDATOR_KEY" 2>/dev/null \
       | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
 
-    if [[ "$STATUS" == "approved" ]]; then
+    if [[ "$STATUS" == "approved" || "$STATUS" == "active" ]]; then
       log "$(t activation_approved)"
       break
+    fi
+
+    # Fallback: also check on-chain status directly. The API file `node-status.json`
+    # only gets updated when admin clicks Approve in /admin UI — if admin signed via
+    # Remix/stuscan/raw tx, API status stays stale forever. On-chain is source of truth.
+    # Status enum: 0=None, 1=Pending, 2=Active, 3=Jailed, 4=Exiting, 5=Exited.
+    CHAIN_STATUS=$(docker exec "$CONTAINER_NAME" sh -c \
+      "geth attach --datadir /data --exec 'eth.call({to:\"$STAKING_CONTRACT_ADDR\",data:\"0xe9790d02000000000000000000000000${VALIDATOR_ADDRESS:2}\"})' 2>/dev/null | tr -d '\r\n\"'" \
+      2>/dev/null || echo "")
+    # getValidator returns a struct; status is the 5th uint8 (offset 0x80 = 4*32 bytes)
+    # Easier: parse JSON-RPC via curl to public RPC — geth attach can be flaky.
+    if [[ -z "$CHAIN_STATUS" || "$CHAIN_STATUS" == "0x" ]]; then
+      STATUS_HEX=$($CURL_API -s --max-time 8 -X POST "$RPC_PUBLIC" \
+        -H "Content-Type: application/json" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"eth_call\",\"params\":[{\"to\":\"$STAKING_CONTRACT_ADDR\",\"data\":\"0xe9790d02000000000000000000000000${VALIDATOR_ADDRESS:2}\"},\"latest\"],\"id\":1}" 2>/dev/null \
+        | python3 -c "import json,sys; print(json.load(sys.stdin).get('result',''))" 2>/dev/null || echo "")
+      # status field at offset 4*32 = byte 128 (hex char 256+2=258). Each uint8 stored in 32-byte slot.
+      # Result is 0x + 12 fields * 64 hex chars. status is field index 4 (0:addr,1:selfStake,2:totalDelegated,3:commission,4:status,...)
+      if [[ -n "$STATUS_HEX" && "$STATUS_HEX" != "0x" ]]; then
+        # field 4 → starts at hex char 2 + 4*64 = 258
+        STATUS_NUM=$(printf '%d' "0x${STATUS_HEX:258:64}" 2>/dev/null || echo "0")
+        if [[ "$STATUS_NUM" == "2" ]]; then
+          log "On-chain status = Active (admin already approved). Activating..."
+          # Also push to API so dashboard reflects
+          $CURL_API -s --max-time 5 -X POST "$API_BASE/node-status-sync" \
+            -H "Content-Type: application/json" \
+            -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\"}" >/dev/null 2>&1 || true
+          break
+        fi
+      fi
     fi
 
     # Print sync progress every 30 seconds
