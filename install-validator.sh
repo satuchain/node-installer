@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.5.7"
+INSTALLER_VERSION="2.5.8"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -1659,10 +1659,12 @@ verify_peering() {
   fi
 
   # ── 3. Outbound connectivity (TCP + UDP) ──────────────────────
+  local outbound_blocked=false
   if timeout 5 bash -c "echo > /dev/tcp/$boot_ip/30303" 2>/dev/null; then
     log "Outbound TCP 30303 → $boot_ip: reachable"
   else
-    warn "Outbound TCP 30303 → $boot_ip: BLOCKED (VPS provider firewall?)"
+    warn "Outbound TCP 30303 → $boot_ip: BLOCKED (VPS provider firewall)"
+    outbound_blocked=true
   fi
   if command -v nc >/dev/null 2>&1; then
     if echo | timeout 3 nc -u -w 2 "$boot_ip" 30303 >/dev/null 2>&1; then
@@ -1691,6 +1693,40 @@ verify_peering() {
     info "Restarting container to apply config change..."
     docker restart "$CONTAINER_NAME" >/dev/null 2>&1 || true
     sleep 8
+  fi
+
+  # ── 6.5. If outbound 30303 blocked, register as peer-helper ─
+  # Some VPS providers (Contabo cheap tier, some shared-host plans) silently
+  # block egress to dest port 30303. INBOUND is usually still open. We get core
+  # validators (val1-4) to dial us back, which establishes an inbound P2P
+  # connection from our POV — bypassing the egress filter.
+  if [[ "$outbound_blocked" == "true" ]]; then
+    info "Outbound 30303 blocked — registering for peer-helper (core validators will dial us back)"
+    # Wait for geth to start advertising the right IP
+    sleep 5
+    local enode=""
+    for try in 1 2 3; do
+      enode=$(docker exec "$CONTAINER_NAME" sh -c \
+        'geth attach --datadir /data --exec "admin.nodeInfo.enode" 2>/dev/null' \
+        2>/dev/null | tr -d '"\r\n' || echo "")
+      [[ -n "$enode" && "$enode" =~ @127\.0\.0\.1: ]] && enode=""  # reject loopback enode
+      [[ -n "$enode" ]] && break
+      sleep 4
+    done
+    if [[ -z "$enode" ]]; then
+      warn "Could not read enode from geth (yet). Re-run --fix in 1 minute."
+    else
+      echo "  Registering enode: ${enode:0:60}..."
+      local resp
+      resp=$($CURL_API -s --max-time 8 -X POST "$API_BASE/peer-helper" \
+        -H "Content-Type: application/json" \
+        -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\",\"enode\":\"$enode\"}" 2>&1 || echo "")
+      if echo "$resp" | grep -q '"ok":true'; then
+        log "Registered with peer-helper service (cores will dial back within 60s)"
+      else
+        warn "peer-helper register failed: $resp"
+      fi
+    fi
   fi
 
   # ── 7. Poll peer count for up to 90s ──────────────────────────
