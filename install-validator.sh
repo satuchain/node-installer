@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.5.8"
+INSTALLER_VERSION="2.5.9"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -1695,39 +1695,10 @@ verify_peering() {
     sleep 8
   fi
 
-  # ── 6.5. If outbound 30303 blocked, register as peer-helper ─
-  # Some VPS providers (Contabo cheap tier, some shared-host plans) silently
-  # block egress to dest port 30303. INBOUND is usually still open. We get core
-  # validators (val1-4) to dial us back, which establishes an inbound P2P
-  # connection from our POV — bypassing the egress filter.
-  if [[ "$outbound_blocked" == "true" ]]; then
-    info "Outbound 30303 blocked — registering for peer-helper (core validators will dial us back)"
-    # Wait for geth to start advertising the right IP
-    sleep 5
-    local enode=""
-    for try in 1 2 3; do
-      enode=$(docker exec "$CONTAINER_NAME" sh -c \
-        'geth attach --datadir /data --exec "admin.nodeInfo.enode" 2>/dev/null' \
-        2>/dev/null | tr -d '"\r\n' || echo "")
-      [[ -n "$enode" && "$enode" =~ @127\.0\.0\.1: ]] && enode=""  # reject loopback enode
-      [[ -n "$enode" ]] && break
-      sleep 4
-    done
-    if [[ -z "$enode" ]]; then
-      warn "Could not read enode from geth (yet). Re-run --fix in 1 minute."
-    else
-      echo "  Registering enode: ${enode:0:60}..."
-      local resp
-      resp=$($CURL_API -s --max-time 8 -X POST "$API_BASE/peer-helper" \
-        -H "Content-Type: application/json" \
-        -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\",\"enode\":\"$enode\"}" 2>&1 || echo "")
-      if echo "$resp" | grep -q '"ok":true'; then
-        log "Registered with peer-helper service (cores will dial back within 60s)"
-      else
-        warn "peer-helper register failed: $resp"
-      fi
-    fi
-  fi
+  # 6.5 removed — peer-helper register moved to AFTER the peer wait below.
+  # Outbound TCP test passing doesn't mean discovery actually works (UDP
+  # could still be blocked, or enode handshake fails). We decide based on
+  # actual peer count after 90s of trying.
 
   # ── 7. Poll peer count for up to 90s ──────────────────────────
   info "Waiting for peer discovery (up to 90s)..."
@@ -1750,16 +1721,38 @@ verify_peering() {
     echo -n "."
   done
   echo ""
-  warn "Still 0 peers after 90s."
+  warn "Still 0 peers after 90s — discovery probably failing (UDP blocked or enode handshake issue)."
+
+  # Last-resort: register as peer-helper so core validators dial us back.
+  # This works around any kind of outbound discovery failure (UDP-block, asymmetric
+  # filter, ISP throttle, etc) by making the connection inbound from validator POV.
+  info "Trying peer-helper fallback — core validators (val1-4) will dial us back"
+  local enode=""
+  for try in 1 2 3; do
+    enode=$(docker exec "$CONTAINER_NAME" sh -c \
+      'geth attach --datadir /data --exec "admin.nodeInfo.enode" 2>/dev/null' \
+      2>/dev/null | tr -d '"\r\n' || echo "")
+    [[ -n "$enode" && "$enode" =~ @127\.0\.0\.1: ]] && enode=""
+    [[ -n "$enode" ]] && break
+    sleep 4
+  done
+  if [[ -z "$enode" ]]; then
+    warn "Could not read enode from geth — geth may not be running. Try: docker logs $CONTAINER_NAME --tail 30"
+  else
+    echo "  Registering enode: ${enode:0:80}..."
+    local resp
+    resp=$($CURL_API -s --max-time 8 -X POST "$API_BASE/peer-helper" \
+      -H "Content-Type: application/json" \
+      -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\",\"enode\":\"$enode\"}" 2>&1 || echo "")
+    if echo "$resp" | grep -q '"ok":true'; then
+      log "Registered with peer-helper. Cores will dial back within 60s — wait + check 'docker exec satuchain-validator sh -c \"geth attach --datadir /data --exec net.peerCount\"'."
+    else
+      warn "peer-helper register failed: $resp"
+    fi
+  fi
   echo ""
-  echo -e "  ${BOLD}Diagnostic dump:${NC}"
-  echo "  ─────────────────────────────────────────────"
-  echo "  Last 15 geth log lines:"
+  echo -e "  ${BOLD}Last 15 geth log lines:${NC}"
   docker logs "$CONTAINER_NAME" --tail 15 2>&1 | sed 's/^/    /'
-  echo "  ─────────────────────────────────────────────"
-  echo "  Most likely cause: VPS provider blocks outbound 30303 (some shared-host plans)"
-  echo "  Verify with your VPS support: traffic to $boot_ip:30303 (TCP+UDP) must be allowed outbound"
-  echo "  Re-run with: curl -fsSL https://staking.satuchain.com/install-validator.sh | sudo bash -s -- --fix"
 }
 
 # ════════════════════════════════════════════════════════════
