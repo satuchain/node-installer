@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.5.3"
+INSTALLER_VERSION="2.5.4"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -1549,7 +1549,80 @@ main() {
   setup_compose_and_start
   setup_monitor
   report_initial
+  verify_peering       # sanity-check peers + auto-fix stale bootnode
   print_summary
+}
+
+# ════════════════════════════════════════════════════════════
+# STEP 11 — Verify peer connectivity (auto-detect & fix common breakages)
+# ════════════════════════════════════════════════════════════
+# After everything is supposedly up, geth still needs to find peers. The most
+# common reasons for peercount=0 forever:
+#   1. config.toml has hostname bootnode left over from a prior install (geth
+#      v1.7.2 enode parser only accepts literal IP). Auto-resolve + sed-replace.
+#   2. UFW dropped outbound 30303 (rare; we only `allow` inbound, so outbound
+#      should be unrestricted by default).
+#   3. VPS provider firewall blocks 30303 (no fix from inside — print warning).
+#
+# We try to fix (1) automatically, then wait up to 60s for peers to appear.
+verify_peering() {
+  step "Verifying peer connectivity"
+
+  local cfg="$CONFIG_DIR/config.toml"
+  local boot_line
+  boot_line=$(grep -A0 "BootstrapNodes" "$cfg" 2>/dev/null || echo "")
+  echo -e "  ${BOLD}Config bootnode:${NC} ${boot_line}"
+
+  # Auto-fix hostname → IP (Parlia/geth v1.7.2 rejects hostname-form enode)
+  if grep -q "bootnode\.satuchain\.com" "$cfg" 2>/dev/null; then
+    warn "Found hostname-form bootnode in config — resolving + replacing with IP"
+    local boot_ip
+    boot_ip=$(getent hosts bootnode.satuchain.com 2>/dev/null | awk '{print $1; exit}')
+    if [[ -z "$boot_ip" ]]; then boot_ip="46.250.225.9"; fi
+    sed -i "s|bootnode\.satuchain\.com|${boot_ip}|g" "$cfg"
+    log "Replaced hostname with $boot_ip — restarting container..."
+    docker restart "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    sleep 6
+  fi
+
+  # Outbound connectivity sanity check to bootnode
+  if timeout 5 bash -c "echo > /dev/tcp/46.250.225.9/30303" 2>/dev/null; then
+    log "Bootnode TCP 30303 reachable"
+  else
+    warn "Cannot reach bootnode 46.250.225.9:30303 — VPS firewall may be blocking outbound P2P"
+  fi
+
+  # UFW: ensure inbound 30303 is allowed (TCP+UDP) — re-applies installer rule
+  if command -v ufw >/dev/null 2>&1; then
+    ufw allow 30303/tcp >/dev/null 2>&1 || true
+    ufw allow 30303/udp >/dev/null 2>&1 || true
+  fi
+
+  # Poll peer count for up to 60s
+  info "Waiting for peer discovery (up to 60s)..."
+  local elapsed=0 peers=0 block=0
+  while (( elapsed < 60 )); do
+    peers=$(docker exec "$CONTAINER_NAME" sh -c \
+      'geth attach --datadir /data --exec "net.peerCount" 2>/dev/null | tr -d "\r\n"' \
+      2>/dev/null | grep -oE '^[0-9]+$' || echo "0")
+    block=$(docker exec "$CONTAINER_NAME" sh -c \
+      'geth attach --datadir /data --exec "eth.blockNumber" 2>/dev/null | tr -d "\r\n"' \
+      2>/dev/null | grep -oE '^[0-9]+$' || echo "0")
+    if (( peers > 0 )); then
+      log "Connected to $peers peer(s), current block: $block. Sync will continue in background."
+      return 0
+    fi
+    sleep 6
+    elapsed=$(( elapsed + 6 ))
+    echo -n "."
+  done
+  echo ""
+  warn "Still 0 peers after 60s. Manual checks:"
+  echo "  1. config.toml bootnode (must be IP, not hostname):"
+  echo "     sudo grep -A1 BootstrapNodes $cfg"
+  echo "  2. Outbound 30303 to bootnode 46.250.225.9 (check VPS firewall)"
+  echo "  3. Container logs: docker logs $CONTAINER_NAME --tail 30"
+  echo "  Node will keep retrying — peers may still come within minutes."
 }
 
 main "$@"
