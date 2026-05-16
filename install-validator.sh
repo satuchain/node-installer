@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.5.5"
+INSTALLER_VERSION="2.5.6"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -1604,39 +1604,73 @@ verify_peering() {
   step "Verifying peer connectivity"
 
   local cfg="$CONFIG_DIR/config.toml"
-  local boot_line
-  boot_line=$(grep -A0 "BootstrapNodes" "$cfg" 2>/dev/null || echo "")
-  echo -e "  ${BOLD}Config bootnode:${NC} ${boot_line}"
 
-  # Auto-fix hostname → IP (Parlia/geth v1.7.2 rejects hostname-form enode)
-  if grep -q "bootnode\.satuchain\.com" "$cfg" 2>/dev/null; then
-    warn "Found hostname-form bootnode in config — resolving + replacing with IP"
-    local boot_ip
-    boot_ip=$(getent hosts bootnode.satuchain.com 2>/dev/null | awk '{print $1; exit}')
-    if [[ -z "$boot_ip" ]]; then boot_ip="46.250.225.9"; fi
-    sed -i "s|bootnode\.satuchain\.com|${boot_ip}|g" "$cfg"
-    log "Replaced hostname with $boot_ip — restarting container..."
-    docker restart "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  # ── 1. Container running? ─────────────────────────────────────
+  if ! docker ps --filter "name=$CONTAINER_NAME" --filter "status=running" \
+       --format "{{.Names}}" 2>/dev/null | grep -q "$CONTAINER_NAME"; then
+    warn "Container $CONTAINER_NAME not running — starting..."
+    docker start "$CONTAINER_NAME" >/dev/null 2>&1 || {
+      docker compose -f "$COMPOSE_FILE" up -d >/dev/null 2>&1 || true
+    }
     sleep 6
   fi
 
-  # Outbound connectivity sanity check to bootnode
-  if timeout 5 bash -c "echo > /dev/tcp/46.250.225.9/30303" 2>/dev/null; then
-    log "Bootnode TCP 30303 reachable"
-  else
-    warn "Cannot reach bootnode 46.250.225.9:30303 — VPS firewall may be blocking outbound P2P"
+  # ── 2. Bootnode in config — hostname → IP resolution ─────────
+  local boot_line
+  boot_line=$(grep BootstrapNodes "$cfg" 2>/dev/null | head -1 || echo "(not found)")
+  echo -e "  ${BOLD}Bootnode in config:${NC} ${boot_line}"
+  local boot_ip="46.250.225.9"
+  local resolved
+  resolved=$(getent hosts bootnode.satuchain.com 2>/dev/null | awk '{print $1; exit}')
+  [[ -n "$resolved" ]] && boot_ip="$resolved"
+  echo -e "  ${BOLD}Resolved bootnode IP:${NC} $boot_ip"
+
+  local restart_needed=false
+  if grep -q "bootnode\.satuchain\.com" "$cfg" 2>/dev/null; then
+    warn "Config has hostname-form bootnode — replacing with IP $boot_ip"
+    sed -i "s|bootnode\.satuchain\.com|${boot_ip}|g" "$cfg"
+    restart_needed=true
   fi
 
-  # UFW: ensure inbound 30303 is allowed (TCP+UDP) — re-applies installer rule
+  # ── 3. Outbound connectivity (TCP + UDP) ──────────────────────
+  if timeout 5 bash -c "echo > /dev/tcp/$boot_ip/30303" 2>/dev/null; then
+    log "Outbound TCP 30303 → $boot_ip: reachable"
+  else
+    warn "Outbound TCP 30303 → $boot_ip: BLOCKED (VPS provider firewall?)"
+  fi
+  if command -v nc >/dev/null 2>&1; then
+    if echo | timeout 3 nc -u -w 2 "$boot_ip" 30303 >/dev/null 2>&1; then
+      log "Outbound UDP 30303 → $boot_ip: probable OK"
+    else
+      warn "Outbound UDP 30303 → $boot_ip: untestable (UDP is connectionless)"
+    fi
+  fi
+
+  # ── 4. UFW inbound rules (idempotent) ────────────────────────
   if command -v ufw >/dev/null 2>&1; then
     ufw allow 30303/tcp >/dev/null 2>&1 || true
     ufw allow 30303/udp >/dev/null 2>&1 || true
+    log "UFW: 30303/tcp + 30303/udp allowed inbound"
   fi
 
-  # Poll peer count for up to 60s
-  info "Waiting for peer discovery (up to 60s)..."
+  # ── 5. Listening on 30303? ────────────────────────────────────
+  if ss -tlnp 2>/dev/null | awk '$4 ~ /:30303$/{print; exit}' | grep -q .; then
+    log "Container binding 30303/tcp on host: yes"
+  else
+    warn "Container not listening on 30303/tcp — geth may not have started P2P yet"
+  fi
+
+  # ── 6. Restart if config changed ─────────────────────────────
+  if [[ "$restart_needed" == "true" ]]; then
+    info "Restarting container to apply config change..."
+    docker restart "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    sleep 8
+  fi
+
+  # ── 7. Poll peer count for up to 90s ──────────────────────────
+  info "Waiting for peer discovery (up to 90s)..."
   local elapsed=0 peers=0 block=0
-  while (( elapsed < 60 )); do
+  while (( elapsed < 90 )); do
     peers=$(docker exec "$CONTAINER_NAME" sh -c \
       'geth attach --datadir /data --exec "net.peerCount" 2>/dev/null | tr -d "\r\n"' \
       2>/dev/null | grep -oE '^[0-9]+$' || echo "0")
@@ -1644,7 +1678,9 @@ verify_peering() {
       'geth attach --datadir /data --exec "eth.blockNumber" 2>/dev/null | tr -d "\r\n"' \
       2>/dev/null | grep -oE '^[0-9]+$' || echo "0")
     if (( peers > 0 )); then
-      log "Connected to $peers peer(s), current block: $block. Sync will continue in background."
+      echo ""
+      log "Connected to $peers peer(s), local block: $block."
+      log "Sync will continue in background. Validator becomes authorized after syncing past the addValidator epoch (~block 1.32M+)."
       return 0
     fi
     sleep 6
@@ -1652,12 +1688,47 @@ verify_peering() {
     echo -n "."
   done
   echo ""
-  warn "Still 0 peers after 60s. Manual checks:"
-  echo "  1. config.toml bootnode (must be IP, not hostname):"
-  echo "     sudo grep -A1 BootstrapNodes $cfg"
-  echo "  2. Outbound 30303 to bootnode 46.250.225.9 (check VPS firewall)"
-  echo "  3. Container logs: docker logs $CONTAINER_NAME --tail 30"
-  echo "  Node will keep retrying — peers may still come within minutes."
+  warn "Still 0 peers after 90s."
+  echo ""
+  echo -e "  ${BOLD}Diagnostic dump:${NC}"
+  echo "  ─────────────────────────────────────────────"
+  echo "  Last 15 geth log lines:"
+  docker logs "$CONTAINER_NAME" --tail 15 2>&1 | sed 's/^/    /'
+  echo "  ─────────────────────────────────────────────"
+  echo "  Most likely cause: VPS provider blocks outbound 30303 (some shared-host plans)"
+  echo "  Verify with your VPS support: traffic to $boot_ip:30303 (TCP+UDP) must be allowed outbound"
+  echo "  Re-run with: curl -fsSL https://staking.satuchain.com/install-validator.sh | sudo bash -s -- --fix"
 }
 
-main "$@"
+# ════════════════════════════════════════════════════════════
+# Sub-commands
+# ════════════════════════════════════════════════════════════
+# Usage:
+#   curl ... | sudo bash               → full install
+#   curl ... | sudo bash -s -- --fix   → only diagnose + fix peering (no reinstall)
+#   curl ... | sudo bash -s -- --status → only print current node state
+case "${1:-}" in
+  --fix|fix)
+    print_banner
+    select_language
+    # Need state for verify_peering (CONTAINER_NAME, CONFIG_DIR, etc are static).
+    if [[ ! -f "$STATE_FILE" ]]; then
+      die "No install state found at $STATE_FILE. Run full installer first."
+    fi
+    VALIDATOR_ADDRESS=$(load_state VALIDATOR_ADDRESS)
+    VALIDATOR_KEY=$(load_state VALIDATOR_KEY)
+    BOOTNODE=$(load_state BOOTNODE)
+    verify_peering
+    exit 0
+    ;;
+  --status|status)
+    if [[ ! -f "$STATE_FILE" ]]; then die "No install state found"; fi
+    echo "Container: $(docker ps --filter "name=$CONTAINER_NAME" --filter "status=running" --format '{{.Names}} {{.Status}}' 2>/dev/null || echo not running)"
+    echo "Local block: $(docker exec "$CONTAINER_NAME" sh -c 'geth attach --datadir /data --exec "eth.blockNumber" 2>/dev/null' 2>/dev/null || echo '?')"
+    echo "Peers: $(docker exec "$CONTAINER_NAME" sh -c 'geth attach --datadir /data --exec "net.peerCount" 2>/dev/null' 2>/dev/null || echo '?')"
+    exit 0
+    ;;
+  *)
+    main "$@"
+    ;;
+esac
