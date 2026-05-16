@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.5.6"
+INSTALLER_VERSION="2.5.7"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -66,6 +66,39 @@ RESUMING=false
 # dashboard never exposes raw IPs of validator-1. But geth v1.7.2's enode parser
 # rejects hostname-form URLs ("bad bootstrap node ... missing IP address"), so
 # right before writing config.toml we resolve to literal IP locally.
+# Top-level so verify_peering can also call this when fixing existing installs
+# without re-running setup_compose_and_start.
+write_compose() {
+  local mode=${1:-sync}  # "sync" or "validator"
+  cat > "$COMPOSE_FILE" <<COMPOSE
+services:
+  $CONTAINER_NAME:
+    image: $BSC_IMAGE
+    container_name: $CONTAINER_NAME
+    restart: unless-stopped
+    network_mode: host
+    # Bypass image's docker-entrypoint.sh which cats /bsc/config/config.toml
+    # (we mount our config at /config/, not /bsc/config/). Run geth directly.
+    entrypoint: ["geth"]
+    volumes:
+      - $DATA_DIR:/data
+      - $CONFIG_DIR:/config
+      - $KEYSTORE_DIR:/data/keystore
+      - $LOG_DIR:/logs
+    command:
+      - --datadir=/data
+      - --config=/config/config.toml
+      - --networkid=$CHAIN_ID
+      - --nat=extip:$PUBLIC_IP
+$([ "$mode" = "validator" ] && echo "      - --mine
+      - --miner.etherbase=$VALIDATOR_ADDRESS
+      - --unlock=$VALIDATOR_ADDRESS
+      - --password=/config/password.txt")
+      - --bootnodes=$BOOTNODE
+      - --verbosity=3
+COMPOSE
+}
+
 resolve_bootnode_to_ip() {
   local en="$1"
   # Match enode://<pubkey>@<host>:<port>?...
@@ -1020,37 +1053,6 @@ setup_compose_and_start() {
     info "Chaindata exists, skipping genesis init"
   fi
 
-  # Write docker-compose.yml — SYNC ONLY mode (no --mine until admin approves)
-  write_compose() {
-    local mode=$1  # "sync" or "validator"
-    cat > "$COMPOSE_FILE" <<COMPOSE
-services:
-  $CONTAINER_NAME:
-    image: $BSC_IMAGE
-    container_name: $CONTAINER_NAME
-    restart: unless-stopped
-    network_mode: host
-    # Bypass image's docker-entrypoint.sh which cats /bsc/config/config.toml
-    # (we mount our config at /config/, not /bsc/config/). Run geth directly.
-    entrypoint: ["geth"]
-    volumes:
-      - $DATA_DIR:/data
-      - $CONFIG_DIR:/config
-      - $KEYSTORE_DIR:/data/keystore
-      - $LOG_DIR:/logs
-    command:
-      - --datadir=/data
-      - --config=/config/config.toml
-      - --networkid=$CHAIN_ID
-$([ "$mode" = "validator" ] && echo "      - --mine
-      - --miner.etherbase=$VALIDATOR_ADDRESS
-      - --unlock=$VALIDATOR_ADDRESS
-      - --password=/config/password.txt")
-      - --bootnodes=$BOOTNODE
-      - --verbosity=3
-COMPOSE
-  }
-
   # Pre-pull disk check — BSC image is ~800 MB, need at least 2 GB free
   PULL_DISK=$(df --output=avail -BG / 2>/dev/null | tail -1 | tr -d 'G ')
   if [[ "${PULL_DISK:-0}" -lt 2 ]]; then
@@ -1604,6 +1606,30 @@ verify_peering() {
   step "Verifying peer connectivity"
 
   local cfg="$CONFIG_DIR/config.toml"
+
+  # ── 0. Compose needs --nat=extip:<PUBLIC_IP> or geth advertises 127.0.0.1 ─
+  # Old installs (<2.5.7) wrote compose without --nat, so geth's enode says
+  # 127.0.0.1 → bootnode peers can't dial back → peer count stays 0 forever.
+  # If --nat missing, refresh PUBLIC_IP and rewrite compose.
+  if [[ -f "$COMPOSE_FILE" ]] && ! grep -q "\-\-nat=extip:" "$COMPOSE_FILE"; then
+    warn "Compose lacks --nat=extip — geth is advertising 127.0.0.1, peers can't reach back"
+    if [[ -z "${PUBLIC_IP:-}" ]] || [[ "$PUBLIC_IP" == "unknown" ]]; then
+      PUBLIC_IP=$(curl -4 -sf https://api.ipify.org --max-time 10 2>/dev/null \
+        || curl -4 -sf https://ifconfig.me --max-time 10 2>/dev/null || echo "")
+    fi
+    if [[ -z "$PUBLIC_IP" ]]; then
+      warn "Could not auto-detect public IP — manual fix needed:"
+      echo "  Edit $COMPOSE_FILE → add line under 'command:'"
+      echo "    - --nat=extip:<your-public-ip>"
+      echo "  Then: docker restart $CONTAINER_NAME"
+    else
+      log "Detected public IP: $PUBLIC_IP — rewriting compose with --nat=extip"
+      write_compose "${MINING_MODE:-sync}"
+      save_state "PUBLIC_IP" "$PUBLIC_IP"
+      docker compose -f "$COMPOSE_FILE" up -d >/dev/null 2>&1 || true
+      sleep 8
+    fi
+  fi
 
   # ── 1. Container running? ─────────────────────────────────────
   if ! docker ps --filter "name=$CONTAINER_NAME" --filter "status=running" \
