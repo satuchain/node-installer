@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.5.2"
+INSTALLER_VERSION="2.5.3"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -1347,9 +1347,76 @@ MONITOR
 
   chmod +x "$MONITOR_SCRIPT"
 
-  # Register cron — replace existing satuchain entry
+  # ── 1. Ensure cron daemon is installed + running ─────────────
+  # Minimal VPS images sometimes ship without cron. Without cron, monitor.sh
+  # never runs, dashboard stays "offline" forever even though node is fine.
+  CRON_UNIT=""
+  if systemctl list-unit-files 2>/dev/null | grep -qE '^cron\.service'; then
+    CRON_UNIT="cron"
+  elif systemctl list-unit-files 2>/dev/null | grep -qE '^crond\.service'; then
+    CRON_UNIT="crond"
+  fi
+  if [[ -z "$CRON_UNIT" ]]; then
+    info "Installing cron daemon..."
+    if command -v apt-get >/dev/null 2>&1; then
+      DEBIAN_FRONTEND=noninteractive apt-get install -y cron >/dev/null 2>&1 && CRON_UNIT="cron"
+    elif command -v yum >/dev/null 2>&1; then
+      yum install -y cronie >/dev/null 2>&1 && CRON_UNIT="crond"
+    fi
+  fi
+  if [[ -n "$CRON_UNIT" ]]; then
+    systemctl enable --now "$CRON_UNIT" >/dev/null 2>&1 || true
+  fi
+
+  # ── 2. Register cron entry (replace existing satuchain entry) ─
   (crontab -l 2>/dev/null | grep -v "satuchain-monitor\|monitor.sh"; \
    echo "*/5 * * * * /bin/bash $MONITOR_SCRIPT") | crontab -
+
+  # ── 3. Always-on systemd timer (belt + suspenders for unreliable cron) ─
+  # If cron is broken / disabled / restricted (containerized hosts, some VPS),
+  # the timer ensures we still push every 5 minutes.
+  if command -v systemctl >/dev/null 2>&1; then
+    cat > /etc/systemd/system/satuchain-monitor.service <<UNIT
+[Unit]
+Description=SatuChain validator monitor (one-shot heartbeat)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash $MONITOR_SCRIPT
+UNIT
+    cat > /etc/systemd/system/satuchain-monitor.timer <<UNIT
+[Unit]
+Description=Run SatuChain validator monitor every 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+UNIT
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable --now satuchain-monitor.timer >/dev/null 2>&1 || true
+  fi
+
+  # ── 4. Force first push NOW so dashboard turns online immediately ─
+  info "Running first heartbeat push..."
+  if /bin/bash "$MONITOR_SCRIPT" 2>&1 | tail -5; then
+    log "First push sent. Dashboard will show online within 30 seconds."
+  else
+    warn "First push had non-zero exit. Check $LOG_DIR/monitor.log"
+  fi
+
+  # ── 5. Verify cron actually scheduled the entry ─
+  if crontab -l 2>/dev/null | grep -q "$MONITOR_SCRIPT"; then
+    log "Cron schedule registered (every 5 min)"
+  else
+    warn "Cron entry not visible — relying on systemd timer fallback"
+  fi
+  if systemctl is-active --quiet satuchain-monitor.timer 2>/dev/null; then
+    log "Systemd timer active (every 5 min)"
+  fi
 
   log "$(t monitor_ok)"
 }
