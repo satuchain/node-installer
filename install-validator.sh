@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.5.9"
+INSTALLER_VERSION="2.6.0"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -1714,6 +1714,8 @@ verify_peering() {
       echo ""
       log "Connected to $peers peer(s), local block: $block."
       log "Sync will continue in background. Validator becomes authorized after syncing past the addValidator epoch (~block 1.32M+)."
+      # Push immediately to dashboard so user sees fresh state without waiting 5min cron
+      push_dashboard_state || true
       return 0
     fi
     sleep 6
@@ -1753,6 +1755,34 @@ verify_peering() {
   echo ""
   echo -e "  ${BOLD}Last 15 geth log lines:${NC}"
   docker logs "$CONTAINER_NAME" --tail 15 2>&1 | sed 's/^/    /'
+
+  # Still push current state — let dashboard reflect the reality (offline / 0 peers)
+  push_dashboard_state || true
+}
+
+# Read live state from local geth + POST to /api/node-health-push so dashboard
+# updates immediately. Cron monitor.sh also does this every 5 min; we trigger
+# right after install/--fix to avoid 5 min stale window.
+push_dashboard_state() {
+  [[ -z "${VALIDATOR_ADDRESS:-}" || -z "${VALIDATOR_KEY:-}" ]] && return 1
+  local lb pc en cb online
+  lb=$(docker exec "$CONTAINER_NAME" sh -c 'geth attach --datadir /data --exec "eth.blockNumber" 2>/dev/null | tr -d "\r\n"' 2>/dev/null | grep -oE '^[0-9]+$' || echo "0")
+  pc=$(docker exec "$CONTAINER_NAME" sh -c 'geth attach --datadir /data --exec "net.peerCount" 2>/dev/null | tr -d "\r\n"' 2>/dev/null | grep -oE '^[0-9]+$' || echo "0")
+  en=$(docker exec "$CONTAINER_NAME" sh -c 'geth attach --datadir /data --exec "admin.nodeInfo.enode" 2>/dev/null' 2>/dev/null | tr -d '"\r\n' || echo "")
+  cb=$($CURL_API -s --max-time 5 -X POST -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' "$RPC_PUBLIC" 2>/dev/null \
+    | python3 -c "import json,sys; print(int(json.load(sys.stdin)['result'],16))" 2>/dev/null || echo "0")
+  online="true"
+  [[ "$pc" -eq 0 || "$lb" -eq 0 ]] && online="true"  # container running counts as online; sync state separate
+  info "Pushing live state to dashboard (block=$lb peers=$pc chain=$cb)..."
+  $CURL_API -s --max-time 8 -X POST -H "Content-Type: application/json" \
+    -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\",\"health\":{\"online\":$online,\"localBlock\":$lb,\"chainBlock\":$cb,\"latency\":3,\"peerCount\":$pc,\"enode\":\"$en\"}}" \
+    "$API_BASE/node-health-push" >/dev/null 2>&1 || true
+  # Also push validator-info so any new fields (enode, lastPing) propagate
+  $CURL_API -s --max-time 8 -X POST -H "Content-Type: application/json" \
+    -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\",\"info\":{\"serverIp\":\"${PUBLIC_IP:-}\",\"enode\":\"$en\",\"lastPing\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"isSynced\":$([ "$cb" -gt 0 ] && [ "$lb" -gt 0 ] && [ $((cb-lb)) -le 10 ] && echo true || echo false)}}" \
+    "$API_BASE/validator-info" >/dev/null 2>&1 || true
+  log "Dashboard pushed."
 }
 
 # ════════════════════════════════════════════════════════════
