@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.6.1"
+INSTALLER_VERSION="2.6.2"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -1314,25 +1314,32 @@ fi
 log_m "block=$LOCAL_BLOCK chain=$CHAIN_BLOCK gap=$SYNC_GAP peers=$PEER_COUNT lat=${LATENCY}ms online=$NODE_ONLINE"
 
 # ── Push health to dashboard (for charts) ────────────────────
-PUSH=$(curl --ipv4 -s --max-time 15 -X POST "$API_BASE/node-health-push" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"address\":\"$VALIDATOR_ADDRESS\",
-    \"key\":\"$VALIDATOR_KEY\",
-    \"health\":{
-      \"online\":$NODE_ONLINE,
-      \"localBlock\":$LOCAL_BLOCK,
-      \"chainBlock\":$CHAIN_BLOCK,
-      \"syncGap\":$SYNC_GAP,
-      \"isSynced\":$IS_SYNCED,
-      \"latency\":$LATENCY,
-      \"peerCount\":$PEER_COUNT,
-      \"enode\":\"$ENODE\"
-    }
-  }" 2>/dev/null)
-echo "$PUSH" | python3 -c "import json,sys; assert json.load(sys.stdin).get('ok')" 2>/dev/null \
-  && log_m "Health pushed OK" \
-  || log_m "WARN: health push failed — $PUSH"
+# Retry up to 3 times on transient network failure (timeout, DNS hiccup).
+PUSH=""
+for attempt in 1 2 3; do
+  PUSH=$(curl --ipv4 -s --max-time 15 --retry 2 --retry-delay 2 -X POST "$API_BASE/node-health-push" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"address\":\"$VALIDATOR_ADDRESS\",
+      \"key\":\"$VALIDATOR_KEY\",
+      \"health\":{
+        \"online\":$NODE_ONLINE,
+        \"localBlock\":$LOCAL_BLOCK,
+        \"chainBlock\":$CHAIN_BLOCK,
+        \"syncGap\":$SYNC_GAP,
+        \"isSynced\":$IS_SYNCED,
+        \"latency\":$LATENCY,
+        \"peerCount\":$PEER_COUNT,
+        \"enode\":\"$ENODE\"
+      }
+    }" 2>&1)
+  if echo "$PUSH" | python3 -c "import json,sys; assert json.load(sys.stdin).get('ok')" 2>/dev/null; then
+    log_m "Health pushed OK (attempt $attempt) — block=$LOCAL_BLOCK gap=$SYNC_GAP peers=$PEER_COUNT"
+    break
+  fi
+  log_m "WARN: health push attempt $attempt failed — $(echo "$PUSH" | head -c 200)"
+  sleep $((attempt * 3))
+done
 
 # ── Update metadata ───────────────────────────────────────────
 curl --ipv4 -s --max-time 15 -X POST "$API_BASE/validator-info" \
@@ -1927,6 +1934,19 @@ case "${1:-}" in
     BOOTNODE=$(load_state BOOTNODE)
     PUBLIC_IP=$(load_state PUBLIC_IP)
     verify_peering
+    # Force monitor.sh to send a fresh heartbeat right now so dashboard reflects
+    # current state without waiting for next 5-min cron tick.
+    if [[ -x "$MONITOR_SCRIPT" ]]; then
+      info "Running monitor.sh for immediate dashboard refresh..."
+      /bin/bash "$MONITOR_SCRIPT" 2>&1 | tail -5 || true
+    fi
+    exit 0
+    ;;
+  --push|push)
+    # Run monitor.sh once. Useful when dashboard shows stale data.
+    if [[ ! -x "$MONITOR_SCRIPT" ]]; then die "monitor.sh not found at $MONITOR_SCRIPT — run full installer first"; fi
+    /bin/bash "$MONITOR_SCRIPT"
+    tail -5 "$LOG_DIR/monitor.log" 2>/dev/null
     exit 0
     ;;
   --status|status)
