@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.6.2"
+INSTALLER_VERSION="2.6.3"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -645,9 +645,15 @@ validate_key() {
     || die "$(t key_invalid_fmt): key must start with satu-val-"
 
   SERVER_ID=$(cat /etc/machine-id 2>/dev/null || hostname | md5sum | cut -c1-16)
+  # IPv4 — primary identity for whitelist + outbound consistency
   PUBLIC_IP=$(curl -4 -sf https://api.ipify.org --max-time 10 2>/dev/null \
            || curl -4 -sf https://ifconfig.me --max-time 10 2>/dev/null \
            || echo "unknown")
+  # IPv6 — best-effort, only registered if dual-stack box outputs a valid v6
+  PUBLIC_IP6=$(curl -6 -sf https://api64.ipify.org --max-time 6 2>/dev/null \
+            || curl -6 -sf https://ifconfig.me --max-time 6 2>/dev/null \
+            || echo "")
+  [[ "$PUBLIC_IP6" == "$PUBLIC_IP" ]] && PUBLIC_IP6=""   # ipify can return v4-mapped, ignore
 
   info "Validating with SatuChain server..."
   RESPONSE=$($CURL_API -s --max-time 15 -X POST "$API_BASE/validate-key" \
@@ -688,9 +694,20 @@ validate_key() {
   save_state "VALIDATOR_NAME"    "$VALIDATOR_NAME"
   save_state "SERVER_ID"         "$SERVER_ID"
   save_state "PUBLIC_IP"         "$PUBLIC_IP"
+  [[ -n "$PUBLIC_IP6" ]] && save_state "PUBLIC_IP6" "$PUBLIC_IP6"
   save_state "VALIDATED_AT"      "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   save_state "BOOTNODE"          "$BOOTNODE"
   chmod 600 "$STATE_FILE"
+
+  # Best-effort: submit IPv6 as additional pending whitelist entry. Server
+  # accepts both IPv4/IPv6 since v2.6.3 backend. If admin hasn't pre-whitelisted
+  # this v6, it'll go into pending queue for admin review at /admin → IP Approvals.
+  if [[ -n "$PUBLIC_IP6" ]]; then
+    info "Detected IPv6 ($PUBLIC_IP6) — submitting for admin review (optional)..."
+    $CURL_API -s --max-time 8 -X POST -H "Content-Type: application/json" \
+      -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"ip\":\"$PUBLIC_IP6\"}" \
+      "$API_BASE/submit-server-ip" >/dev/null 2>&1 || true
+  fi
 }
 
 # ════════════════════════════════════════════════════════════
@@ -1951,9 +1968,12 @@ case "${1:-}" in
     ;;
   --status|status)
     if [[ ! -f "$STATE_FILE" ]]; then die "No install state found"; fi
-    echo "Container: $(docker ps --filter "name=$CONTAINER_NAME" --filter "status=running" --format '{{.Names}} {{.Status}}' 2>/dev/null || echo not running)"
+    echo "Address    : $(load_state VALIDATOR_ADDRESS)"
+    echo "Public IPv4: $(load_state PUBLIC_IP)"
+    IP6=$(load_state PUBLIC_IP6); [[ -n "$IP6" ]] && echo "Public IPv6: $IP6"
+    echo "Container  : $(docker ps --filter "name=$CONTAINER_NAME" --filter "status=running" --format '{{.Status}}' 2>/dev/null || echo 'not running')"
     echo "Local block: $(docker exec "$CONTAINER_NAME" sh -c 'geth attach --datadir /data --exec "eth.blockNumber" 2>/dev/null' 2>/dev/null || echo '?')"
-    echo "Peers: $(docker exec "$CONTAINER_NAME" sh -c 'geth attach --datadir /data --exec "net.peerCount" 2>/dev/null' 2>/dev/null || echo '?')"
+    echo "Peers      : $(docker exec "$CONTAINER_NAME" sh -c 'geth attach --datadir /data --exec "net.peerCount" 2>/dev/null' 2>/dev/null || echo '?')"
     exit 0
     ;;
   --backup|backup)
