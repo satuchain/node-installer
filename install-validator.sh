@@ -46,8 +46,9 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.6.4"
-INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
+INSTALLER_VERSION="2.6.5"
+INSTALLER_URL="https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh"
+INSTALLER_URL_MIRROR="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
 # Minimum requirements — HARD STOP if not met
@@ -1582,7 +1583,9 @@ self_update() {
   echo ""
 
   NEW_SCRIPT=$(mktemp /tmp/satuchain-installer-XXXXXX.sh)
-  if curl --ipv4 -fsSL --max-time 30 "$INSTALLER_URL" -o "$NEW_SCRIPT" 2>/dev/null; then
+  # Try GitHub raw first (canonical source), fall back to dashboard mirror
+  if curl --ipv4 -fsSL --max-time 30 "$INSTALLER_URL" -o "$NEW_SCRIPT" 2>/dev/null \
+    || curl --ipv4 -fsSL --max-time 30 "$INSTALLER_URL_MIRROR" -o "$NEW_SCRIPT" 2>/dev/null; then
     chmod +x "$NEW_SCRIPT"
     log "Downloaded v${LATEST_TAG}. Restarting with new version..."
     echo ""
@@ -1668,7 +1671,7 @@ restore_validator() {
   chmod 600 "$INSTALL_DIR/config/password.txt" "$INSTALL_DIR/.state" 2>/dev/null || true
 
   log "Files restored. Re-run installer normally to bring container back up:"
-  echo "  curl -fsSL https://staking.satuchain.com/install-validator.sh | sudo bash"
+  echo "  curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh | sudo bash"
 }
 
 setup_backup() {

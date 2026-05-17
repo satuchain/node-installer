@@ -2,18 +2,24 @@
 
 Official installer for running a validator node on **SatuChain Mainnet** (Chain ID: 10111945).
 
-Current version: **v2.6.1** • [Releases](https://github.com/satuchain/node-installer/releases) • [Issues](https://github.com/satuchain/node-installer/issues)
+Current version: **v2.6.5** • [Releases](https://github.com/satuchain/node-installer/releases) • [Issues](https://github.com/satuchain/node-installer/issues)
 
 ## Quick Start
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh | sudo bash
+```
+
+Or use the dashboard mirror (same file, different CDN — useful if GitHub raw is rate-limited or blocked):
 
 ```bash
 curl -fsSL https://staking.satuchain.com/install-validator.sh | sudo bash
 ```
 
-If you hit the curl pipe error `bash: syntax error near unexpected token '('`, download first then run:
+If you hit the curl pipe error `bash: syntax error near unexpected token '('`, download first then run (avoid pasting commentary into terminal):
 
 ```bash
-curl -fsSL https://staking.satuchain.com/install-validator.sh -o /tmp/sat.sh
+curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh -o /tmp/sat.sh
 sudo bash /tmp/sat.sh
 ```
 
@@ -116,7 +122,7 @@ sudo bash -x /tmp/sat.sh 2>&1 | tail -50
 Caused by **pasting message text into the terminal** along with the command. Bash tries to parse the explanation as commands. Solution: download first then run, don't curl-pipe:
 
 ```bash
-curl -fsSL https://staking.satuchain.com/install-validator.sh -o /tmp/sat.sh
+curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh -o /tmp/sat.sh
 sudo bash /tmp/sat.sh
 ```
 
@@ -218,7 +224,7 @@ ls -la /opt/satuchain-validator/backups/
 3. On NEW server:
    ```bash
    sudo mkdir -p /opt/satuchain-validator
-   curl -fsSL https://staking.satuchain.com/install-validator.sh -o /tmp/sat.sh
+   curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh -o /tmp/sat.sh
    sudo bash /tmp/sat.sh --restore /path/to/validator-YYYYMMDD-HHMMSS.tar.gz
    sudo bash /tmp/sat.sh   # full install — will resume with restored state
    ```
