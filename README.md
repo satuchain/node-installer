@@ -39,7 +39,7 @@ Before running the installer:
 | Network   | Port **30303 TCP+UDP outbound and inbound** | 100 Mbps |
 | Uptime    | > 90% | > 99% |
 
-> **Critical:** Your VPS provider MUST allow **outbound port 30303** to `46.250.225.9` (bootnode). Some cheap shared-host plans silently block this. See [Troubleshooting → peer count stays 0](#peer-count-stays-0).
+> **Critical:** Your VPS provider MUST allow **outbound port 30303** to the SatuChain bootnode (`bootnode.satuchain.com:30303`, TCP + UDP). Some cheap shared-host plans silently block this. See [Troubleshooting → peer count stays 0](#peer-count-stays-0).
 
 ### Tested VPS Providers
 
@@ -145,7 +145,7 @@ The fix subcommand will:
 4. Test outbound TCP to bootnode
 5. If after 90 s peer count is still 0, **auto-register with the peer-helper service** — core validators will dial out to your IP, bypassing any outbound egress filter on your VPS
 
-If the diagnostic dump at the end says outbound 30303 is blocked, contact your VPS support and ask them to allow outbound TCP+UDP to `46.250.225.9:30303` (standard blockchain P2P).
+If the diagnostic dump at the end says outbound 30303 is blocked, contact your VPS support and ask them to allow outbound TCP+UDP to `bootnode.satuchain.com:30303` (standard blockchain P2P).
 
 ### Dashboard shows offline / Last Check is hours old
 

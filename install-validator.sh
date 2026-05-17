@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.6.3"
+INSTALLER_VERSION="2.6.4"
 INSTALLER_URL="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
@@ -1792,10 +1792,18 @@ verify_peering() {
   local boot_line
   boot_line=$(grep BootstrapNodes "$cfg" 2>/dev/null | head -1 || echo "(not found)")
   echo -e "  ${BOLD}Bootnode in config:${NC} ${boot_line}"
-  local boot_ip="46.250.225.9"
-  local resolved
-  resolved=$(getent hosts bootnode.satuchain.com 2>/dev/null | awk '{print $1; exit}')
-  [[ -n "$resolved" ]] && boot_ip="$resolved"
+  # Resolve bootnode hostname via DNS — no hardcoded IP in source (defense
+  # against casual scraping). If DNS fails, fall back to whatever's already
+  # in config.toml.
+  local boot_ip
+  boot_ip=$(getent hosts bootnode.satuchain.com 2>/dev/null | awk '{print $1; exit}')
+  if [[ -z "$boot_ip" ]]; then
+    boot_ip=$(grep -oE '@[0-9.]+:30303' "$cfg" 2>/dev/null | head -1 | tr -d '@' | cut -d: -f1)
+  fi
+  if [[ -z "$boot_ip" ]]; then
+    warn "Cannot resolve bootnode hostname — check DNS / connectivity"
+    return 1
+  fi
   echo -e "  ${BOLD}Resolved bootnode IP:${NC} $boot_ip"
 
   local restart_needed=false
