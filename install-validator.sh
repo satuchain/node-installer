@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.6.5"
+INSTALLER_VERSION="2.6.6"
 INSTALLER_URL="https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh"
 INSTALLER_URL_MIRROR="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
@@ -1258,14 +1258,14 @@ setup_compose_and_start() {
 }
 
 # ════════════════════════════════════════════════════════════
-# STEP 9 — Monitor script (cron every 5 min)
+# STEP 9 — Monitor script (cron every 1 min — dashboard needs realtime data)
 # ════════════════════════════════════════════════════════════
 setup_monitor() {
   step "$(t step_monitor)"
 
   cat > "$MONITOR_SCRIPT" << 'MONITOR'
 #!/bin/bash
-# SatuChain Validator Monitor v2.1 — auto sync health to dashboard + auto-update node image
+# SatuChain Validator Monitor v2.2 — auto sync health to dashboard (1-min) + auto-update node image
 
 INSTALL_DIR="/opt/satuchain-validator"
 STATE_FILE="$INSTALL_DIR/.state"
@@ -1434,12 +1434,14 @@ MONITOR
   fi
 
   # ── 2. Register cron entry (replace existing satuchain entry) ─
+  # Every minute — dashboard's Live Performance row + Produced Blocks chart
+  # need fresh health pushes; 5-min cadence makes the UI feel frozen.
   (crontab -l 2>/dev/null | grep -v "satuchain-monitor\|monitor.sh"; \
-   echo "*/5 * * * * /bin/bash $MONITOR_SCRIPT") | crontab -
+   echo "* * * * * /bin/bash $MONITOR_SCRIPT") | crontab -
 
   # ── 3. Always-on systemd timer (belt + suspenders for unreliable cron) ─
   # If cron is broken / disabled / restricted (containerized hosts, some VPS),
-  # the timer ensures we still push every 5 minutes.
+  # the timer ensures we still push every minute (matches cron cadence).
   if command -v systemctl >/dev/null 2>&1; then
     cat > /etc/systemd/system/satuchain-monitor.service <<UNIT
 [Unit]
@@ -1451,12 +1453,12 @@ ExecStart=/bin/bash $MONITOR_SCRIPT
 UNIT
     cat > /etc/systemd/system/satuchain-monitor.timer <<UNIT
 [Unit]
-Description=Run SatuChain validator monitor every 5 minutes
+Description=Run SatuChain validator monitor every minute
 
 [Timer]
-OnBootSec=1min
-OnUnitActiveSec=5min
-AccuracySec=30s
+OnBootSec=30s
+OnUnitActiveSec=1min
+AccuracySec=15s
 
 [Install]
 WantedBy=timers.target
