@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # SatuChain Mainnet — Validator Node Installer
-# Version: 2.1.0 — Docker-based deployment
+# Version: 2.6.7 — Docker-based deployment
 # Usage : curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh | sudo bash
 # Min req: 2 vCPU / 2 GB RAM / 50 GB SSD  |  Rec: 4 vCPU / 4 GB RAM / 100 GB SSD
 # ============================================================
@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.6.6"
+INSTALLER_VERSION="2.6.7"
 INSTALLER_URL="https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh"
 INSTALLER_URL_MIRROR="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
@@ -270,6 +270,7 @@ t() {
     id:summary_s1)             echo "Node sinkron dengan SatuChain" ;;
     id:summary_s2)             echo "Monitor kirim status ke dashboard tiap 5 menit" ;;
     id:summary_s3)             echo "Setelah admin approve, node otomatis aktif sebagai validator" ;;
+    id:summary_s4)             echo "Proteksi: validator baru di-jail otomatis on-chain sampai admin verifikasi (self-stake AMAN, tidak di-slash). Hubungi admin di Telegram/Discord SatuChain untuk percepat unjail." ;;
     # English (default)
     en:step_req)       echo "Checking Server Requirements" ;;
     en:step_conn)      echo "Checking Connectivity" ;;
@@ -343,6 +344,7 @@ t() {
     en:summary_s1)     echo "Node syncing with SatuChain" ;;
     en:summary_s2)     echo "Monitor sends status to dashboard every 5 minutes" ;;
     en:summary_s3)     echo "When synced, admin gets notified to approve your validator" ;;
+    en:summary_s4)     echo "Protection: new validators are auto-jailed on-chain until admin verifies (self-stake is SAFE, not slashed). Contact admin on SatuChain Telegram/Discord to speed up unjail." ;;
     *)                 echo "$key $*" ;;
   esac
 }
@@ -374,6 +376,14 @@ print_banner() {
   echo -e "${NC}"
   echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v${INSTALLER_VERSION}${NC}"
   echo -e "  Chain ID: ${CYAN}$CHAIN_ID${NC}  •  APoS Consensus  •  Docker-based"
+  echo ""
+  echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "  ${YELLOW}${BOLD}IMPORTANT — Protective Validator Filter Active${NC}"
+  echo -e "  New validators are ${YELLOW}auto-jailed on-chain${NC} after register until admin"
+  echo -e "  verifies. Self-stake is ${GREEN}SAFE${NC}, ${GREEN}NOT slashed${NC}. To skip the jail step,"
+  echo -e "  ask admin to ${BOLD}whitelist your wallet${NC} BEFORE you click Stake & Register."
+  echo -e "  Contact: ${CYAN}t.me/satuchain${NC} or ${CYAN}discord.gg/satuchain${NC}"
+  echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo ""
 }
 
@@ -1536,6 +1546,8 @@ print_summary() {
   echo -e "  ${CYAN}✓${NC} $(t summary_s1)"
   echo -e "  ${CYAN}✓${NC} $(t summary_s2)"
   echo -e "  ${CYAN}✓${NC} $(t summary_s3)"
+  echo ""
+  echo -e "  ${YELLOW}${BOLD}⓵ $(t summary_s4)${NC}"
   echo ""
   echo -e "  ${BOLD}$(t summary_logs)${NC}"
   echo -e "  ${YELLOW}docker logs $CONTAINER_NAME -f${NC}"
