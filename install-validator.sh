@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # SatuChain Mainnet — Validator Node Installer
-# Version: 2.6.8 — Docker-based deployment
+# Version: 2.6.9 — Docker-based deployment
 # Usage : curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh | sudo bash
 # Min req: 2 vCPU / 2 GB RAM / 50 GB SSD  |  Rec: 4 vCPU / 4 GB RAM / 100 GB SSD
 # ============================================================
@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.6.8"
+INSTALLER_VERSION="2.6.9"
 INSTALLER_URL="https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh"
 INSTALLER_URL_MIRROR="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
@@ -950,17 +950,21 @@ setup_account() {
         # Dir is 700 on host so others still can't traverse here.
         chmod 644 "$SECURE_TMP/.pk" "$SECURE_TMP/.pw"
 
-        # Pre-pull image so user sees progress (first run is ~100MB).
-        # Without this, the `docker run` below pulls silently and a slow/failed
-        # pull looks like the installer hangs or exits silently under set -e.
+        # Pre-pull image so user sees progress (first run is ~100MB). Skip if the
+        # image is already present (re-runs) so we never hang on a slow ghcr.io
+        # registry round-trip; cap a real pull with a timeout instead of hanging.
         info "Pulling validator node image (~100MB, first time only)..."
-        set +e
-        docker pull "$BSC_IMAGE"
-        PULL_RC=$?
-        set -e
-        if [[ $PULL_RC -ne 0 ]]; then
-          report_status "keystore" "failed" "docker pull $BSC_IMAGE failed (exit $PULL_RC)"
-          die "Failed to pull $BSC_IMAGE. Check internet + 'docker pull $BSC_IMAGE' manually."
+        if docker image inspect "$BSC_IMAGE" >/dev/null 2>&1; then
+          log "Image already present — skipping pull"
+        else
+          set +e
+          timeout 300 docker pull "$BSC_IMAGE"
+          PULL_RC=$?
+          set -e
+          if [[ $PULL_RC -ne 0 ]]; then
+            report_status "keystore" "failed" "docker pull $BSC_IMAGE failed/timeout (exit $PULL_RC)"
+            die "Failed to pull $BSC_IMAGE. Check internet + 'docker pull $BSC_IMAGE' manually."
+          fi
         fi
 
         info "Importing private key into keystore..."
@@ -1099,11 +1103,13 @@ setup_compose_and_start() {
 
   info "$(t compose_pull)"
   report_status "pull" "started" "Pulling Docker image $BSC_IMAGE..."
-  if ! docker pull "$BSC_IMAGE"; then
-    report_status "pull" "failed" "docker pull failed — check disk space and memory"
+  if docker image inspect "$BSC_IMAGE" >/dev/null 2>&1; then
+    log "Image $BSC_IMAGE already present locally — skipping pull (no registry round-trip)"
+  elif ! timeout 300 docker pull "$BSC_IMAGE"; then
+    report_status "pull" "failed" "docker pull failed/timed out — check disk, memory, network"
     die "$(t compose_fail)"
   fi
-  report_status "pull" "done" "Image pulled successfully"
+  report_status "pull" "done" "Image ready"
 
   # Pre-flight: ensure ports geth needs (8545/8546/30303) are free.
   # Compose uses network_mode=host, so the container binds directly to host.
