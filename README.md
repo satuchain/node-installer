@@ -2,7 +2,7 @@
 
 Official installer for running a validator node on **SatuChain Mainnet** (Chain ID: 10111945).
 
-Current version: **v2.6.7** • [Releases](https://github.com/satuchain/node-installer/releases) • [Issues](https://github.com/satuchain/node-installer/issues)
+Current version: **v2.6.8** • [Releases](https://github.com/satuchain/node-installer/releases) • [Issues](https://github.com/satuchain/node-installer/issues)
 
 ## Quick Start
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # SatuChain Mainnet — Validator Node Installer
-# Version: 2.6.7 — Docker-based deployment
+# Version: 2.6.8 — Docker-based deployment
 # Usage : curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh | sudo bash
 # Min req: 2 vCPU / 2 GB RAM / 50 GB SSD  |  Rec: 4 vCPU / 4 GB RAM / 100 GB SSD
 # ============================================================
@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.6.7"
+INSTALLER_VERSION="2.6.8"
 INSTALLER_URL="https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh"
 INSTALLER_URL_MIRROR="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
@@ -1275,7 +1275,7 @@ setup_monitor() {
 
   cat > "$MONITOR_SCRIPT" << 'MONITOR'
 #!/bin/bash
-# SatuChain Validator Monitor v2.2 — auto sync health to dashboard (1-min) + auto-update node image
+# SatuChain Validator Monitor v2.3 — auto sync health to dashboard (1-min) + auto-update node image
 
 INSTALL_DIR="/opt/satuchain-validator"
 STATE_FILE="$INSTALL_DIR/.state"
@@ -1340,6 +1340,33 @@ if [[ $CHAIN_BLOCK -gt 0 && $LOCAL_BLOCK -gt 0 ]]; then
 fi
 
 log_m "block=$LOCAL_BLOCK chain=$CHAIN_BLOCK gap=$SYNC_GAP peers=$PEER_COUNT lat=${LATENCY}ms online=$NODE_ONLINE"
+
+# ── Self-recovery: restart own node if desynced (stuck behind a live chain) ───
+# If our local head stops advancing while the public chain keeps moving, this node
+# is desynced — restart it to force re-sync + rejoin consensus. Time-based with a
+# cooldown so it never thrashes, and it fires ONLY when we're genuinely BEHIND
+# (gap >= SR_GAP). It deliberately does NOT trigger on a chain-wide halt (local ==
+# chain) so validators never all restart at once.
+SR_STATE="$INSTALL_DIR/.selfrecover"   # "lastblock change_ts restart_ts"
+SR_STALL_SECS=120                      # behind + not advancing this long → restart
+SR_GAP=15                              # must be at least this many blocks behind
+SR_COOLDOWN=600                        # min seconds between auto-restarts
+SR_NOW=$(date +%s)
+read -r SR_LB SR_CHG SR_RST < "$SR_STATE" 2>/dev/null || { SR_LB=-1; SR_CHG=$SR_NOW; SR_RST=0; }
+[[ "$SR_LB" =~ ^-?[0-9]+$ ]] || { SR_LB=-1; SR_CHG=$SR_NOW; SR_RST=0; }
+if [[ "$LOCAL_BLOCK" != "$SR_LB" ]]; then SR_LB=$LOCAL_BLOCK; SR_CHG=$SR_NOW; fi
+if [[ "$NODE_ONLINE" == "true" && "$LOCAL_BLOCK" -gt 0 && "$CHAIN_BLOCK" -gt 0 \
+      && $(( CHAIN_BLOCK - LOCAL_BLOCK )) -ge $SR_GAP \
+      && $(( SR_NOW - SR_CHG )) -ge $SR_STALL_SECS \
+      && $(( SR_NOW - SR_RST )) -ge $SR_COOLDOWN ]]; then
+  log_m "SELF-RECOVER: local=$LOCAL_BLOCK behind chain=$CHAIN_BLOCK by $(( CHAIN_BLOCK - LOCAL_BLOCK )), stuck $(( SR_NOW - SR_CHG ))s — restarting $CONTAINER"
+  docker restart "$CONTAINER" >/dev/null 2>&1 || docker compose -f "$COMPOSE_FILE" up -d >/dev/null 2>&1 || true
+  curl --ipv4 -s --max-time 8 "https://api.telegram.org/bot8630947650:AAE8D9Z4Xk-Z0V-e6pWDLFxnVeqzmFbOt-c/sendMessage" \
+    --data-urlencode chat_id="1770634887" \
+    --data-urlencode text="⚠️ Validator ${VALIDATOR_ADDRESS:0:10}… desync (local $LOCAL_BLOCK vs chain $CHAIN_BLOCK) — auto-restart" >/dev/null 2>&1 || true
+  SR_RST=$SR_NOW; SR_CHG=$SR_NOW
+fi
+echo "$SR_LB $SR_CHG $SR_RST" > "$SR_STATE"
 
 # ── Push health to dashboard (for charts) ────────────────────
 # Retry up to 3 times on transient network failure (timeout, DNS hiccup).
