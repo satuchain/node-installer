@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.6.9"
+INSTALLER_VERSION="2.7.0"
 INSTALLER_URL="https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh"
 INSTALLER_URL_MIRROR="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
@@ -761,6 +761,59 @@ install_docker() {
 
   log "$(t docker_ok): $(docker --version)"
   report_status "docker" "done" "$(docker --version)"
+}
+
+# ════════════════════════════════════════════════════════════
+# STEP 4b — Time synchronization (NTP)  [added v2.7.0]
+# A validator with a skewed clock seals blocks with bad timestamps that
+# peers reject as "future block" (consensus.ErrFutureBlock). On a fast
+# clock this forks/stalls the whole chain (2026-05-26 incident: one
+# validator's clock drifted ahead → recurring equal-difficulty forks).
+# Keeping the clock NTP-synced is mandatory for consensus health.
+# ════════════════════════════════════════════════════════════
+setup_timesync() {
+  step "Time sync (NTP) / Sinkronisasi waktu"
+  report_status "timesync" "started" "Configuring NTP time sync..."
+
+  # Enable kernel NTP + ensure a time-sync daemon is installed.
+  if command -v timedatectl &>/dev/null; then
+    timedatectl set-ntp true 2>/dev/null || true
+  fi
+  if ! command -v chronyd &>/dev/null && ! systemctl list-unit-files 2>/dev/null | grep -q systemd-timesyncd; then
+    info "Installing time-sync daemon..."
+    if command -v apt-get &>/dev/null; then
+      apt-get update -qq 2>/dev/null || true
+      apt-get install -y -qq chrony 2>/dev/null || apt-get install -y -qq systemd-timesyncd 2>/dev/null || true
+    elif command -v dnf &>/dev/null; then
+      dnf install -y -q chrony 2>/dev/null || true
+    elif command -v yum &>/dev/null; then
+      yum install -y -q chrony 2>/dev/null || true
+    fi
+  fi
+
+  # Start the daemon + force an immediate step correction (don't wait for slew).
+  if command -v chronyd &>/dev/null; then
+    systemctl enable chronyd --now 2>/dev/null || systemctl enable chrony --now 2>/dev/null || true
+    chronyc makestep 2>/dev/null || true
+  elif systemctl list-unit-files 2>/dev/null | grep -q systemd-timesyncd; then
+    systemctl enable systemd-timesyncd --now 2>/dev/null || true
+  fi
+
+  # Verify — warn loudly (do NOT die) if still unconfirmed.
+  sleep 2
+  local synced=""
+  if command -v timedatectl &>/dev/null; then
+    synced=$(timedatectl show -p NTPSynchronized --value 2>/dev/null)
+    [[ -z "$synced" ]] && synced=$(timedatectl status 2>/dev/null | grep -i 'synchronized' | grep -io 'yes\|no' | head -1)
+  fi
+  if [[ "$synced" == "yes" || "$synced" == "true" ]]; then
+    log "Clock NTP-synchronized: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    report_status "timesync" "done" "Clock NTP-synchronized"
+  else
+    warn "Clock sync NOT confirmed — a skewed clock will FORK the chain."
+    warn "Fix manually: timedatectl set-ntp true && systemctl restart systemd-timesyncd (or chronyd) && timedatectl status"
+    report_status "timesync" "warn" "Clock sync unconfirmed (NTPSynchronized=$synced)"
+  fi
 }
 
 # ════════════════════════════════════════════════════════════
@@ -1657,6 +1710,7 @@ main() {
   check_connectivity
   validate_key         # SECURITY GATE (skipped on resume)
   install_docker       # auto-install if missing
+  setup_timesync       # NTP clock sync — skewed clocks fork the chain (v2.7.0)
   setup_genesis
   setup_account
   setup_firewall
