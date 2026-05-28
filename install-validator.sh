@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # SatuChain Mainnet — Validator Node Installer
-# Version: 2.6.9 — Docker-based deployment
+# Version: 2.8.0 — HTTP-time fallback for clock sync (NTP-blocked hosts)
 # Usage : curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh | sudo bash
 # Min req: 2 vCPU / 2 GB RAM / 50 GB SSD  |  Rec: 4 vCPU / 4 GB RAM / 100 GB SSD
 # ============================================================
@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.7.0"
+INSTALLER_VERSION="2.8.0"
 INSTALLER_URL="https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh"
 INSTALLER_URL_MIRROR="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
@@ -771,48 +771,153 @@ install_docker() {
 # validator's clock drifted ahead → recurring equal-difficulty forks).
 # Keeping the clock NTP-synced is mandatory for consensus health.
 # ════════════════════════════════════════════════════════════
+# Get true epoch from HTTPS Date header — works even when UDP/123 (NTP) is
+# blocked. Used both to measure drift and as fallback time source.
+_ts_http_epoch() {
+  local url d e
+  for url in https://www.google.com https://www.cloudflare.com https://www.bing.com; do
+    d=$(curl --ipv4 -sI --max-time 8 "$url" 2>/dev/null \
+        | awk 'BEGIN{IGNORECASE=1}/^date:/{sub(/^[Dd]ate:[ ]*/,"");sub(/\r$/,"");print;exit}')
+    if [[ -n "$d" ]]; then
+      e=$(date -u -d "$d" +%s 2>/dev/null || true)
+      [[ -n "$e" ]] && { echo "$e"; return 0; }
+    fi
+  done
+  return 1
+}
+
+# True only if chrony has actually contacted an upstream NTP server (= UDP/123
+# not blocked). The previous version of setup_timesync trusted
+# `NTPSynchronized=yes` which can lie when chronyd is up but unreachable.
+_ts_chrony_reachable() {
+  command -v chronyc >/dev/null 2>&1 || return 1
+  local trk strat
+  trk=$(chronyc tracking 2>/dev/null) || return 1
+  echo "$trk" | grep -qiE 'Leap status[[:space:]]*:[[:space:]]*Normal' || return 1
+  strat=$(printf '%s\n' "$trk" | sed -n 's/.*Stratum[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p')
+  [[ -n "$strat" ]] && [[ "$strat" -ge 1 ]] 2>/dev/null && [[ "$strat" -le 9 ]] 2>/dev/null
+}
+
 setup_timesync() {
   step "Time sync (NTP) / Sinkronisasi waktu"
-  report_status "timesync" "started" "Configuring NTP time sync..."
+  report_status "timesync" "started" "Configuring clock sync..."
 
-  # Enable kernel NTP + ensure a time-sync daemon is installed.
-  if command -v timedatectl &>/dev/null; then
-    timedatectl set-ntp true 2>/dev/null || true
+  # Measure drift vs real time (HTTPS — does not depend on UDP/123).
+  local LOCAL_NOW REMOTE_NOW DRIFT="unknown"
+  LOCAL_NOW=$(date -u +%s)
+  REMOTE_NOW=$(_ts_http_epoch || true)
+  if [[ -n "$REMOTE_NOW" ]]; then
+    DRIFT=$(( LOCAL_NOW - REMOTE_NOW ))
+    info "Drift awal vs waktu asli: ${DRIFT}s"
   fi
-  if ! command -v chronyd &>/dev/null && ! systemctl list-unit-files 2>/dev/null | grep -q systemd-timesyncd; then
-    info "Installing time-sync daemon..."
-    if command -v apt-get &>/dev/null; then
-      apt-get update -qq 2>/dev/null || true
-      apt-get install -y -qq chrony 2>/dev/null || apt-get install -y -qq systemd-timesyncd 2>/dev/null || true
-    elif command -v dnf &>/dev/null; then
-      dnf install -y -q chrony 2>/dev/null || true
-    elif command -v yum &>/dev/null; then
-      yum install -y -q chrony 2>/dev/null || true
+
+  # Avoid two time daemons fighting.
+  systemctl disable --now systemd-timesyncd >/dev/null 2>&1 || true
+
+  # Install chrony if missing.
+  if ! command -v chronyc >/dev/null 2>&1; then
+    info "Installing chrony..."
+    if command -v apt-get >/dev/null 2>&1; then
+      DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq chrony >/dev/null 2>&1 || true
+    elif command -v dnf >/dev/null 2>&1; then
+      dnf install -y -q chrony >/dev/null 2>&1 || true
+    elif command -v yum >/dev/null 2>&1; then
+      yum install -y -q chrony >/dev/null 2>&1 || true
     fi
   fi
 
-  # Start the daemon + force an immediate step correction (don't wait for slew).
-  if command -v chronyd &>/dev/null; then
-    systemctl enable chronyd --now 2>/dev/null || systemctl enable chrony --now 2>/dev/null || true
-    chronyc makestep 2>/dev/null || true
-  elif systemctl list-unit-files 2>/dev/null | grep -q systemd-timesyncd; then
-    systemctl enable systemd-timesyncd --now 2>/dev/null || true
+  # Ensure chrony has upstream servers configured.
+  local CHRONY_CONF=""
+  for f in /etc/chrony/chrony.conf /etc/chrony.conf; do
+    [[ -f "$f" ]] && CHRONY_CONF="$f" && break
+  done
+  if [[ -n "$CHRONY_CONF" ]] && ! grep -qE '^[[:space:]]*(server|pool)[[:space:]]' "$CHRONY_CONF"; then
+    {
+      echo ""
+      echo "# added by satuchain validator installer v${INSTALLER_VERSION}"
+      echo "pool pool.ntp.org iburst"
+      echo "server time.google.com iburst"
+      echo "server time.cloudflare.com iburst"
+    } >> "$CHRONY_CONF"
   fi
 
-  # Verify — warn loudly (do NOT die) if still unconfirmed.
-  sleep 2
-  local synced=""
-  if command -v timedatectl &>/dev/null; then
-    synced=$(timedatectl show -p NTPSynchronized --value 2>/dev/null)
-    [[ -z "$synced" ]] && synced=$(timedatectl status 2>/dev/null | grep -i 'synchronized' | grep -io 'yes\|no' | head -1)
+  # Start chrony (service name is "chrony" on Debian/Ubuntu, "chronyd" on RHEL).
+  local CHRONY_SVC=""
+  if command -v chronyc >/dev/null 2>&1; then
+    for svc in chrony chronyd; do
+      if systemctl list-unit-files 2>/dev/null | grep -q "^${svc}\.service"; then
+        CHRONY_SVC="$svc"
+        break
+      fi
+    done
+    if [[ -n "$CHRONY_SVC" ]]; then
+      systemctl enable --now "$CHRONY_SVC" >/dev/null 2>&1 || true
+      systemctl restart "$CHRONY_SVC" >/dev/null 2>&1 || true
+    fi
   fi
-  if [[ "$synced" == "yes" || "$synced" == "true" ]]; then
-    log "Clock NTP-synchronized: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    report_status "timesync" "done" "Clock NTP-synchronized"
+
+  # Wait up to 25s for chrony to actually reach an upstream.
+  if command -v chronyc >/dev/null 2>&1; then
+    info "Menunggu chrony sinkron (maks 25s)..."
+    local i
+    for i in $(seq 1 25); do
+      _ts_chrony_reachable && break
+      sleep 1
+    done
+  fi
+
+  local METHOD="none"
+  if _ts_chrony_reachable; then
+    chronyc -a makestep >/dev/null 2>&1 || chronyc makestep >/dev/null 2>&1 || true
+    command -v timedatectl >/dev/null 2>&1 && timedatectl set-ntp true >/dev/null 2>&1 || true
+    METHOD="chrony (NTP/UDP123 OK)"
+    log "Clock disinkron via chrony — NTP terjangkau."
   else
-    warn "Clock sync NOT confirmed — a skewed clock will FORK the chain."
-    warn "Fix manually: timedatectl set-ntp true && systemctl restart systemd-timesyncd (or chronyd) && timedatectl status"
-    report_status "timesync" "warn" "Clock sync unconfirmed (NTPSynchronized=$synced)"
+    # UDP/123 blocked (common on Contabo cheap tier) — install HTTPS-Date fallback.
+    # 2026-05-26 incident proved that just enabling chronyd is NOT enough on
+    # firewalled hosts: chronyd shows "active" but the clock never gets
+    # disciplined, drifting again within hours. This fallback uses the Date:
+    # header from common HTTPS endpoints (:443) which firewalls don't block.
+    warn "Chrony tidak dapat sinkron (UDP/123 kemungkinan diblok firewall)."
+    info "Memasang fallback HTTP-time (sync via port 443)..."
+    cat > /usr/local/sbin/satuchain-httptime <<'HTTPTIME'
+#!/bin/sh
+# satuchain-httptime — keep clock synced via HTTPS Date header when UDP/123 (NTP)
+# egress is blocked. Granularity ~1s, well within the validator future-block
+# tolerance (15s). Installed by satuchain validator installer setup_timesync.
+for url in https://www.google.com https://www.cloudflare.com https://www.bing.com; do
+  d=$(curl -4 -sI --max-time 8 "$url" 2>/dev/null \
+      | awk 'BEGIN{IGNORECASE=1}/^date:/{sub(/^[Dd]ate:[ ]*/,"");sub(/\r$/,"");print;exit}')
+  [ -n "$d" ] || continue
+  if date -u -s "$d" >/dev/null 2>&1; then
+    hwclock -w >/dev/null 2>&1
+    exit 0
+  fi
+done
+exit 1
+HTTPTIME
+    chmod +x /usr/local/sbin/satuchain-httptime
+    /usr/local/sbin/satuchain-httptime >/dev/null 2>&1 || true
+    echo '*/5 * * * * root /usr/local/sbin/satuchain-httptime >/dev/null 2>&1' > /etc/cron.d/satuchain-httptime
+    chmod 644 /etc/cron.d/satuchain-httptime
+    systemctl restart cron >/dev/null 2>&1 || systemctl restart crond >/dev/null 2>&1 || true
+    METHOD="HTTP-time fallback (UDP/123 blocked) — cron every 5min"
+    log "Clock disinkron via HTTPS Date fallback (cron tiap 5 menit)."
+  fi
+
+  # Final verification — measure drift again.
+  local AFTER_LOCAL AFTER_REMOTE AFTER_DRIFT="unknown"
+  AFTER_LOCAL=$(date -u +%s)
+  AFTER_REMOTE=$(_ts_http_epoch || true)
+  [[ -n "$AFTER_REMOTE" ]] && AFTER_DRIFT=$(( AFTER_LOCAL - AFTER_REMOTE ))
+
+  if [[ "$AFTER_DRIFT" != "unknown" ]] && [[ "${AFTER_DRIFT#-}" -le 2 ]] 2>/dev/null; then
+    log "Clock benar (drift ${AFTER_DRIFT}s). Method: ${METHOD}"
+    report_status "timesync" "done" "Clock synced via ${METHOD} (drift=${AFTER_DRIFT}s)"
+  else
+    warn "Clock masih melenceng ${AFTER_DRIFT}s setelah setup — periksa koneksi internet box."
+    report_status "timesync" "warn" "Drift after setup: ${AFTER_DRIFT}s, method=${METHOD}"
   fi
 }
 
