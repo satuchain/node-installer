@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # SatuChain Mainnet — Validator Node Installer
-# Version: 2.8.0 — HTTP-time fallback for clock sync (NTP-blocked hosts)
+# Version: 2.8.1 — security: removed hardcoded TG bot token from monitor.sh
 # Usage : curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh | sudo bash
 # Min req: 2 vCPU / 2 GB RAM / 50 GB SSD  |  Rec: 4 vCPU / 4 GB RAM / 100 GB SSD
 # ============================================================
@@ -46,7 +46,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.8.0"
+INSTALLER_VERSION="2.8.1"
 INSTALLER_URL="https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh"
 INSTALLER_URL_MIRROR="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
@@ -1525,9 +1525,10 @@ if [[ "$NODE_ONLINE" == "true" && "$LOCAL_BLOCK" -gt 0 && "$CHAIN_BLOCK" -gt 0 \
       && $(( SR_NOW - SR_RST )) -ge $SR_COOLDOWN ]]; then
   log_m "SELF-RECOVER: local=$LOCAL_BLOCK behind chain=$CHAIN_BLOCK by $(( CHAIN_BLOCK - LOCAL_BLOCK )), stuck $(( SR_NOW - SR_CHG ))s — restarting $CONTAINER"
   docker restart "$CONTAINER" >/dev/null 2>&1 || docker compose -f "$COMPOSE_FILE" up -d >/dev/null 2>&1 || true
-  curl --ipv4 -s --max-time 8 "https://api.telegram.org/bot8630947650:AAE8D9Z4Xk-Z0V-e6pWDLFxnVeqzmFbOt-c/sendMessage" \
-    --data-urlencode chat_id="1770634887" \
-    --data-urlencode text="⚠️ Validator ${VALIDATOR_ADDRESS:0:10}… desync (local $LOCAL_BLOCK vs chain $CHAIN_BLOCK) — auto-restart" >/dev/null 2>&1 || true
+  # NOTE (v2.8.1): direct Telegram alert removed — token must not ship in a
+  # public installer. Self-recovery events are visible via monitor.log and the
+  # /node-health-push call below (which the dashboard surfaces). Admin-side
+  # alerts now happen on the central dashboard server, keyed by VALIDATOR_KEY.
   SR_RST=$SR_NOW; SR_CHG=$SR_NOW
 fi
 echo "$SR_LB $SR_CHG $SR_RST" > "$SR_STATE"
