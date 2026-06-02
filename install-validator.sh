@@ -1,7 +1,8 @@
 #!/bin/bash
 # ============================================================
 # SatuChain Mainnet — Validator Node Installer
-# Version: 2.8.1 — security: removed hardcoded TG bot token from monitor.sh
+# Version: 2.8.2 — always register peer-helper (not only when peers==0), so every
+#                  node survives core restarts + appears on dashboard immediately
 # Usage : curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh | sudo bash
 # Min req: 2 vCPU / 2 GB RAM / 50 GB SSD  |  Rec: 4 vCPU / 4 GB RAM / 100 GB SSD
 # ============================================================
@@ -46,7 +47,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.8.1"
+INSTALLER_VERSION="2.8.2"
 INSTALLER_URL="https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh"
 INSTALLER_URL_MIRROR="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
@@ -101,6 +102,38 @@ $([ "$mode" = "validator" ] && echo "      - --mine
       - --bootnodes=$BOOTNODE
       - --verbosity=3
 COMPOSE
+}
+
+# Register this validator's enode with the backend peer-helper list.
+# Called UNCONDITIONALLY (not only when discovery fails) because peers are
+# dropped whenever a core validator (val1) restarts, and ONLY nodes present in
+# peer-helpers.json get auto-redialed by the host cron. Registering always means
+# the node survives core restarts and shows up on the dashboard immediately.
+# Idempotent server-side (keyed by address), safe to call every install/--fix.
+register_peer_helper() {
+  [[ -z "${VALIDATOR_ADDRESS:-}" || -z "${VALIDATOR_KEY:-}" ]] && return 1
+  local enode="" try
+  for try in 1 2 3; do
+    enode=$(docker exec "$CONTAINER_NAME" sh -c \
+      'geth attach --datadir /data --exec "admin.nodeInfo.enode" 2>/dev/null' \
+      2>/dev/null | tr -d '"\r\n' || echo "")
+    [[ -n "$enode" && "$enode" =~ @127\.0\.0\.1: ]] && enode=""   # NAT not applied yet
+    [[ -n "$enode" ]] && break
+    sleep 4
+  done
+  if [[ -z "$enode" ]]; then
+    warn "Could not read enode for peer-helper register — geth may not be up yet."
+    return 1
+  fi
+  local resp
+  resp=$($CURL_API -s --max-time 8 -X POST "$API_BASE/peer-helper" \
+    -H "Content-Type: application/json" \
+    -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\",\"enode\":\"$enode\"}" 2>&1 || echo "")
+  if echo "$resp" | grep -q '"ok":true'; then
+    log "Registered enode with peer-helper (auto-redial survives core restarts)."
+  else
+    warn "peer-helper register failed: $resp"
+  fi
 }
 
 resolve_bootnode_to_ip() {
@@ -2079,6 +2112,9 @@ verify_peering() {
       echo ""
       log "Connected to $peers peer(s), local block: $block."
       log "Sync will continue in background. Validator becomes authorized after syncing past the addValidator epoch (~block 1.32M+)."
+      # Register peer-helper even though discovery worked — so this node is
+      # auto-redialed after any future core (val1) restart and shows on dashboard.
+      register_peer_helper || true
       # Push immediately to dashboard so user sees fresh state without waiting 5min cron
       push_dashboard_state || true
       return 0
@@ -2090,33 +2126,13 @@ verify_peering() {
   echo ""
   warn "Still 0 peers after 90s — discovery probably failing (UDP blocked or enode handshake issue)."
 
-  # Last-resort: register as peer-helper so core validators dial us back.
-  # This works around any kind of outbound discovery failure (UDP-block, asymmetric
-  # filter, ISP throttle, etc) by making the connection inbound from validator POV.
-  info "Trying peer-helper fallback — core validators (val1-4) will dial us back"
-  local enode=""
-  for try in 1 2 3; do
-    enode=$(docker exec "$CONTAINER_NAME" sh -c \
-      'geth attach --datadir /data --exec "admin.nodeInfo.enode" 2>/dev/null' \
-      2>/dev/null | tr -d '"\r\n' || echo "")
-    [[ -n "$enode" && "$enode" =~ @127\.0\.0\.1: ]] && enode=""
-    [[ -n "$enode" ]] && break
-    sleep 4
-  done
-  if [[ -z "$enode" ]]; then
-    warn "Could not read enode from geth — geth may not be running. Try: docker logs $CONTAINER_NAME --tail 30"
-  else
-    echo "  Registering enode: ${enode:0:80}..."
-    local resp
-    resp=$($CURL_API -s --max-time 8 -X POST "$API_BASE/peer-helper" \
-      -H "Content-Type: application/json" \
-      -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\",\"enode\":\"$enode\"}" 2>&1 || echo "")
-    if echo "$resp" | grep -q '"ok":true'; then
-      log "Registered with peer-helper. Cores will dial back within 60s — wait + check 'docker exec satuchain-validator sh -c \"geth attach --datadir /data --exec net.peerCount\"'."
-    else
-      warn "peer-helper register failed: $resp"
-    fi
-  fi
+  # Discovery failed (UDP-block, asymmetric filter, ISP throttle, etc). The
+  # peer-helper makes core validators dial us back (inbound from our POV), which
+  # bypasses outbound filtering. register_peer_helper already runs on the success
+  # path too, but this is now the critical path when peers==0.
+  info "Discovery failed — registering peer-helper so cores (val1-4) dial us back"
+  register_peer_helper || \
+    warn "Could not register peer-helper — geth may not be running. Try: docker logs $CONTAINER_NAME --tail 30"
   echo ""
   echo -e "  ${BOLD}Last 15 geth log lines:${NC}"
   docker logs "$CONTAINER_NAME" --tail 15 2>&1 | sed 's/^/    /'
