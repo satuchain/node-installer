@@ -2,7 +2,15 @@
 
 Official installer for running a validator node on **SatuChain Mainnet** (Chain ID: 10111945).
 
-Current version: **v2.6.9** • [Releases](https://github.com/satuchain/node-installer/releases) • [Issues](https://github.com/satuchain/node-installer/issues)
+Current version: **v2.9.0** • [Releases](https://github.com/satuchain/node-installer/releases) • [Issues](https://github.com/satuchain/node-installer/issues)
+
+> **What's new in v2.9.0 — self-healing clock-guard.** Installs a per-minute guard
+> (`/usr/local/sbin/satuchain-clock-guard`) that keeps the validator clock disciplined
+> via HTTPS Date (works even when UDP/123 NTP egress is firewalled) and **auto-restarts
+> geth if the clock ever drifts ≥5s** — the condition that makes a node seal
+> future-timestamped blocks and fork the chain. Fixes the recurring "Received future
+> block" stalls on firewalled hosts. Existing installs: re-run the installer (safe —
+> `geth init` is skipped when chaindata exists, keystore/key preserved via resume).
 
 ## Quick Start
 

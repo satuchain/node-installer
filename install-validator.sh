@@ -47,7 +47,7 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.8.2"
+INSTALLER_VERSION="2.9.0"
 INSTALLER_URL="https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh"
 INSTALLER_URL_MIRROR="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
@@ -798,6 +798,10 @@ install_docker() {
 
 # ════════════════════════════════════════════════════════════
 # STEP 4b — Time synchronization (NTP)  [added v2.7.0]
+# v2.9.0: + persistent self-healing clock-guard (cron/1min) that corrects drift
+#         via HTTPS Date AND auto-restarts geth on ≥5s drift. Fixes the recurring
+#         "Received future block" fork-loop on firewalled (UDP/123-blocked) hosts
+#         where the one-shot install-time sync silently lapsed.
 # A validator with a skewed clock seals blocks with bad timestamps that
 # peers reject as "future block" (consensus.ErrFutureBlock). On a fast
 # clock this forks/stalls the whole chain (2026-05-26 incident: one
@@ -938,6 +942,63 @@ HTTPTIME
     METHOD="HTTP-time fallback (UDP/123 blocked) — cron every 5min"
     log "Clock disinkron via HTTPS Date fallback (cron tiap 5 menit)."
   fi
+
+  # ── Persistent self-healing clock-guard (v2.9.0) ────────────────────────────
+  # Installed in BOTH paths as a safety net. The install-time sync above is a
+  # one-shot; chrony can later silently lose its upstream (UDP/123 blocked) and
+  # the 5-min HTTP cron only *corrects* the clock — it never restarts geth. So a
+  # box could free-run past the 15s future-block tolerance between cron ticks and
+  # seal future-timestamped blocks, forking the chain (the recurring incident).
+  # This guard runs every MINUTE: measures drift via HTTPS Date, steps the clock
+  # when it exceeds 2s, and — crucially — bounces the geth container when drift
+  # was big enough to risk future blocks (≥5s), with a 10-min cooldown so it can
+  # never thrash. This is what stops the fork-loop without human intervention.
+  cat > /usr/local/sbin/satuchain-clock-guard <<HEADER
+#!/bin/sh
+# satuchain-clock-guard — auto-installed by validator installer v${INSTALLER_VERSION}
+GETH="${CONTAINER_NAME}"
+HEADER
+  cat >> /usr/local/sbin/satuchain-clock-guard <<'GUARD'
+# Keeps the validator clock disciplined even when UDP/123 (NTP) egress is blocked,
+# and self-heals geth if the clock ever drifts far enough to seal future blocks.
+CORRECT_THRESHOLD=2     # step the clock when |drift| > this many seconds
+RESTART_THRESHOLD=5     # also restart geth when |drift| >= this many seconds
+RESTART_COOLDOWN=600    # min seconds between geth restarts (anti-thrash)
+LOG=/var/log/satuchain-clock-guard.log
+STAMP=/run/satuchain-clock-guard.last-restart
+ts() { date -u +%FT%TZ; }
+for url in https://www.google.com https://www.cloudflare.com https://www.bing.com; do
+  d=$(curl -4 -sI --max-time 8 "$url" 2>/dev/null \
+      | awk 'BEGIN{IGNORECASE=1}/^date:/{sub(/^[Dd]ate:[ ]*/,"");sub(/\r$/,"");print;exit}')
+  [ -n "$d" ] || continue
+  real=$(date -u -d "$d" +%s 2>/dev/null) || continue
+  now=$(date -u +%s)
+  drift=$(( now - real )); ad=${drift#-}
+  [ "$ad" -le "$CORRECT_THRESHOLD" ] && exit 0
+  date -u -s "$d" >/dev/null 2>&1 && hwclock -w >/dev/null 2>&1
+  echo "$(ts) corrected drift=${drift}s" >> "$LOG"
+  if [ "$ad" -ge "$RESTART_THRESHOLD" ] && command -v docker >/dev/null 2>&1; then
+    last=$(cat "$STAMP" 2>/dev/null || echo 0)
+    if [ $(( $(date -u +%s) - last )) -ge "$RESTART_COOLDOWN" ]; then
+      if docker restart "$GETH" >/dev/null 2>&1; then
+        date -u +%s > "$STAMP"
+        echo "$(ts) restarted $GETH (drift was ${drift}s)" >> "$LOG"
+      fi
+    else
+      echo "$(ts) drift=${drift}s — geth restart skipped (cooldown)" >> "$LOG"
+    fi
+  fi
+  exit 0
+done
+echo "$(ts) WARN: no HTTPS time source reachable" >> "$LOG"
+exit 1
+GUARD
+  chmod +x /usr/local/sbin/satuchain-clock-guard
+  /usr/local/sbin/satuchain-clock-guard >/dev/null 2>&1 || true
+  echo '* * * * * root /usr/local/sbin/satuchain-clock-guard >/dev/null 2>&1' > /etc/cron.d/satuchain-clock-guard
+  chmod 644 /etc/cron.d/satuchain-clock-guard
+  systemctl restart cron >/dev/null 2>&1 || systemctl restart crond >/dev/null 2>&1 || true
+  log "Clock-guard self-healing dipasang (cek tiap menit, auto-restart geth bila drift ≥5s)."
 
   # Final verification — measure drift again.
   local AFTER_LOCAL AFTER_REMOTE AFTER_DRIFT="unknown"
