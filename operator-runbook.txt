@@ -1,0 +1,59 @@
+══════════════════════════════════════════════
+PANDUAN OPERATOR — VALIDATOR SATUCHAIN MAINNET
+══════════════════════════════════════════════
+
+Kepada Yth. Operator Validator,
+Silakan ikuti langkah-langkah berikut di server validator Anda (melalui VNC/Console panel Contabo).
+
+──────────────────────────────────────────
+LANGKAH 1 — Jalankan Installer
+──────────────────────────────────────────
+1. Buka terminal/console di panel Contabo (VNC/Console).
+2. Jalankan perintah berikut:
+
+   curl --ipv4 -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh -o /tmp/install-validator.sh
+   sudo bash /tmp/install-validator.sh
+
+3. Jika installer mendeteksi instalasi sebelumnya, pilih opsi [Y] untuk melanjutkan (Resume).
+   - Jika instalasi baru, ikuti petunjuk di layar (masukkan alamat wallet validator, private key, dll).
+
+──────────────────────────────────────────
+LANGKAH 2 — Verifikasi
+──────────────────────────────────────────
+Setelah instalasi selesai, jalankan perintah ini di console:
+
+  docker ps | grep satuchain-validator
+  docker logs satuchain-validator --since 30m | tail -n 50
+
+Pastikan:
+  - Container "satuchain-validator" berjalan (status "Up").
+  - Tidak ada error "slash validator failed" atau "clock drift".
+  - Log menampilkan peer-helper registration berhasil.
+
+──────────────────────────────────────────
+LANGKAH 3 — Cek Ketinggalan Blok
+──────────────────────────────────────────
+  docker exec satuchain-validator sh -c 'geth attach --datadir /data --exec "eth.blockNumber" 2>/dev/null'
+
+Catat angka blok yang muncul. Hubungi admin jika blok Anda tertinggal lebih dari 2 blok dari blok kanonis.
+
+──────────────────────────────────────────
+CATATAN KHUSUS
+──────────────────────────────────────────
+• Installer v2.9.1 sudah menyertakan perbaikan clock-guard. Jika Anda pernah mengalami masalah clock drift (Spingu), installer akan menanganinya secara otomatis.
+• Jangan jalankan installer via SSH. Gunakan VNC/Console Contabo agar https://staking.satuchain.com/install-validator.sh tetap berjalan di foreground.
+• Password keystore dan private key hanya tersimpan di server Anda, tidak dikirim ke manapun.
+
+──────────────────────────────────────────
+BANTUAN
+──────────────────────────────────────────
+Jika mengalami kendala, kirimkan:
+  1. Output lengkap `docker logs satuchain-validator --since 1h`
+  2. Hasil `docker ps | grep satuchain`
+  3. Hasil `df -h` dan `free -h`
+
+Kirim ke admin melalui grup Telegram/Discord SatuChain.
+
+Terima kasih,
+Tim SatuChain
+══════════════════════════════════════════════

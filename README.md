@@ -1,8 +1,10 @@
-# SatuChain Validator Node Installer
+# Satuchain Validator Node Installer
 
-Official installer for running a validator node on **SatuChain Mainnet** (Chain ID: 10111945).
+Official installer for running a validator node on **Satuchain Mainnet** (Chain ID: 10111945).
 
-Current version: **v2.9.0** • [Releases](https://github.com/satuchain/node-installer/releases) • [Issues](https://github.com/satuchain/node-installer/issues)
+Current version: **v2.9.1** • [Releases](https://github.com/satuchain/node-installer/releases) • [Issues](https://github.com/satuchain/node-installer/issues)
+
+> **What's new in v2.9.1 — safety upgrade of v2.9.0.** Honors existing install state (resume), backs up existing config/state/compose before changes, and applies an idempotent clock-guard that only re-installs when needed.
 
 > **What's new in v2.9.0 — self-healing clock-guard.** Installs a per-minute guard
 > (`/usr/local/sbin/satuchain-clock-guard`) that keeps the validator clock disciplined
@@ -36,7 +38,7 @@ sudo bash /tmp/sat.sh
 Before running the installer:
 
 1. **Register at the dashboard** → [staking.satuchain.com](https://staking.satuchain.com)
-2. **Self-stake at least 2,000,000 STU** (or get **exempt** flag from admin) on SatuChain Mainnet
+2. **Self-stake at least 2,000,000 STU** (or get **exempt** flag from admin) on Satuchain Mainnet
 3. **Submit your server IP** via the dashboard → wait for admin to whitelist
 4. **Receive your Validator Key** (`satu-val-...`) from the admin
 
@@ -53,7 +55,7 @@ Before running the installer:
 | Network   | Port **30303 TCP+UDP outbound and inbound** | 100 Mbps |
 | Uptime    | > 90% | > 99% |
 
-> **Critical:** Your VPS provider MUST allow **outbound port 30303** to the SatuChain bootnode (`bootnode.satuchain.com:30303`, TCP + UDP). Some cheap shared-host plans silently block this. See [Troubleshooting → peer count stays 0](#peer-count-stays-0).
+> **Critical:** Your VPS provider MUST allow **outbound port 30303** to the Satuchain bootnode (`bootnode.satuchain.com:30303`, TCP + UDP). Some cheap shared-host plans silently block this. See [Troubleshooting → peer count stays 0](#peer-count-stays-0).
 
 ### Tested VPS Providers
 
@@ -253,7 +255,7 @@ ls -la /opt/satuchain-validator/backups/
 ## Node Software
 
 - Image: `ghcr.io/satuchain/node:1.7.2` (public, MIT licensed binary)
-- Consensus: **APoS** (Adaptive Proof-of-Stake), SatuChain fork of BSC Parlia
+- Consensus: **APoS** (Adaptive Proof-of-Stake), Satuchain fork of BSC Parlia
 - Engine: EVM-compatible
 - Chain ID: `10111945`
 - Source: <https://github.com/satuchain/sdk>
@@ -266,4 +268,4 @@ ls -la /opt/satuchain-validator/backups/
 
 ---
 
-© SatuChain.
+© Satuchain.

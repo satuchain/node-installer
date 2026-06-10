@@ -1,8 +1,10 @@
 #!/bin/bash
 # ============================================================
 # SatuChain Mainnet — Validator Node Installer
-# Version: 2.8.2 — always register peer-helper (not only when peers==0), so every
-#                  node survives core restarts + appears on dashboard immediately
+# Version: 2.9.1 — safety upgrade of 2.9.0
+#   - honor existing install state (resume)
+#   - backup existing state/config/compose before changes
+#   - idempotent clock-guard (skip if already installed)
 # Usage : curl -fsSL https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh | sudo bash
 # Min req: 2 vCPU / 2 GB RAM / 50 GB SSD  |  Rec: 4 vCPU / 4 GB RAM / 100 GB SSD
 # ============================================================
@@ -47,8 +49,8 @@ MONITOR_SCRIPT="$INSTALL_DIR/monitor.sh"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 BSC_IMAGE="ghcr.io/satuchain/node:1.7.2"
 CONTAINER_NAME="satuchain-validator"
-INSTALLER_VERSION="2.9.0"
-INSTALLER_URL="https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh"
+INSTALLER_VERSION="2.9.1"
+INSTALLER_URL_REPO="https://raw.githubusercontent.com/satuchain/node-installer/main/install-validator.sh"
 INSTALLER_URL_MIRROR="https://staking.satuchain.com/install-validator.sh"
 GITHUB_LATEST_API="https://api.github.com/repos/satuchain/node-installer/releases/latest"
 
