@@ -52,8 +52,8 @@ Jika mengalami kendala, kirimkan:
   2. Hasil `docker ps | grep satuchain`
   3. Hasil `df -h` dan `free -h`
 
-Kirim ke admin melalui grup Telegram/Discord SatuChain.
+Kirim ke admin melalui grup Telegram/Discord Satuchain.
 
 Terima kasih,
-Tim SatuChain
+Tim Satuchain
 ══════════════════════════════════════════════

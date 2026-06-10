@@ -255,7 +255,7 @@ ls -la /opt/satuchain-validator/backups/
 ## Node Software
 
 - Image: `ghcr.io/satuchain/node:1.7.2` (public, MIT licensed binary)
-- Consensus: **APoS** (Adaptive Proof-of-Stake), Satuchain fork of BSC Parlia
+- Consensus: **APoS** (Adaptive Proof-of-Stake)
 - Engine: EVM-compatible
 - Chain ID: `10111945`
 - Source: <https://github.com/satuchain/sdk>

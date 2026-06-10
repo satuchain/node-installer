@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# SatuChain Mainnet — Validator Node Installer
+# Satuchain Mainnet — Validator Node Installer
 # Version: 2.9.1 — safety upgrade of 2.9.0
 #   - honor existing install state (resume)
 #   - backup existing state/config/compose before changes
@@ -251,7 +251,7 @@ t() {
     id:conn_ok)        echo "Semua koneksi OK" ;;
     id:conn_no_inet)   echo "Tidak ada koneksi internet" ;;
     id:conn_api_fail)  echo "Staking API tidak merespons" ;;
-    id:conn_rpc_fail)  echo "RPC SatuChain tidak merespons" ;;
+    id:conn_rpc_fail)  echo "RPC Satuchain tidak merespons" ;;
     id:conn_boot_fail) echo "Bootnode P2P tidak terjangkau — periksa firewall port 30303" ;;
     id:key_prompt_addr)echo "Masukkan alamat wallet validator (0x...):" ;;
     id:key_prompt_key) echo "Masukkan kunci validator (satu-val-...):" ;;
@@ -262,17 +262,17 @@ t() {
     id:docker_exists)  echo "Docker sudah terinstal" ;;
     id:docker_install) echo "Menginstal Docker..." ;;
     id:docker_ok)      echo "Docker terinstal" ;;
-    id:genesis_dl)     echo "Mengunduh genesis dari SatuChain..." ;;
+    id:genesis_dl)     echo "Mengunduh genesis dari Satuchain..." ;;
     id:genesis_ok)     echo "Genesis diunduh dan diverifikasi" ;;
-    id:genesis_fail)   echo "Gagal mengunduh genesis. Hubungi admin SatuChain." ;;
+    id:genesis_fail)   echo "Gagal mengunduh genesis. Hubungi admin Satuchain." ;;
     id:account_exists) echo "Keystore sudah ada untuk alamat ini" ;;
     id:account_method) echo "Pilih metode import akun validator:" ;;
     id:account_opt1)   echo "  1) Import private key (64 karakter hex)" ;;
     id:account_opt2)   echo "  2) Import file keystore JSON (UTC--...)" ;;
-    id:account_note)   echo "  Langkah ini untuk mengizinkan NODE kamu MENANDATANGANI BLOK di SatuChain." ;;
+    id:account_note)   echo "  Langkah ini untuk mengizinkan NODE kamu MENANDATANGANI BLOK di Satuchain." ;;
     id:account_note2)  echo "  Kamu perlu memasukkan private key dari wallet validator kamu." ;;
     id:account_note3)  echo "  Private key ini HANYA disimpan terenkripsi di server kamu sendiri," ;;
-    id:account_note4)  echo "  dan TIDAK dikirim ke server SatuChain manapun." ;;
+    id:account_note4)  echo "  dan TIDAK dikirim ke server Satuchain manapun." ;;
     id:account_note5)  echo "  Ini BUKAN Validator Key (satu-val-...) — itu sudah selesai tadi." ;;
     id:account_note6)  echo "  Format: 0x + 64 karakter hex (export dari MetaMask/wallet kamu)" ;;
     id:account_pk)     echo "Masukkan private key wallet validator (0x...):" ;;
@@ -302,10 +302,10 @@ t() {
     id:summary_logs)           echo "Pantau log:" ;;
     id:summary_view)           echo "Pantau di dashboard:" ;;
     id:summary_next)           echo "Langkah selanjutnya (otomatis):" ;;
-    id:summary_s1)             echo "Node sinkron dengan SatuChain" ;;
+    id:summary_s1)             echo "Node sinkron dengan Satuchain" ;;
     id:summary_s2)             echo "Monitor kirim status ke dashboard tiap 5 menit" ;;
     id:summary_s3)             echo "Setelah admin approve, node otomatis aktif sebagai validator" ;;
-    id:summary_s4)             echo "Proteksi: validator baru di-jail otomatis on-chain sampai admin verifikasi (self-stake AMAN, tidak di-slash). Hubungi admin di Telegram/Discord SatuChain untuk percepat unjail." ;;
+    id:summary_s4)             echo "Proteksi: validator baru di-jail otomatis on-chain sampai admin verifikasi (self-stake AMAN, tidak di-slash). Hubungi admin di Telegram/Discord Satuchain untuk percepat unjail." ;;
     # English (default)
     en:step_req)       echo "Checking Server Requirements" ;;
     en:step_conn)      echo "Checking Connectivity" ;;
@@ -325,7 +325,7 @@ t() {
     en:conn_ok)        echo "All connections OK" ;;
     en:conn_no_inet)   echo "No internet connection" ;;
     en:conn_api_fail)  echo "Staking API not responding" ;;
-    en:conn_rpc_fail)  echo "SatuChain RPC not responding" ;;
+    en:conn_rpc_fail)  echo "Satuchain RPC not responding" ;;
     en:conn_boot_fail) echo "Bootnode P2P unreachable — check firewall port 30303" ;;
     en:key_prompt_addr)echo "Enter validator wallet address (0x...):" ;;
     en:key_prompt_key) echo "Enter validator key (satu-val-...):" ;;
@@ -336,17 +336,17 @@ t() {
     en:docker_exists)  echo "Docker is already installed" ;;
     en:docker_install) echo "Installing Docker..." ;;
     en:docker_ok)      echo "Docker installed" ;;
-    en:genesis_dl)     echo "Downloading genesis from SatuChain..." ;;
+    en:genesis_dl)     echo "Downloading genesis from Satuchain..." ;;
     en:genesis_ok)     echo "Genesis downloaded and verified" ;;
-    en:genesis_fail)   echo "Failed to download genesis. Contact SatuChain admin." ;;
+    en:genesis_fail)   echo "Failed to download genesis. Contact Satuchain admin." ;;
     en:account_exists) echo "Keystore already exists for this address" ;;
     en:account_method) echo "Select validator account import method:" ;;
     en:account_opt1)   echo "  1) Import private key (64-char hex)" ;;
     en:account_opt2)   echo "  2) Import keystore JSON file (UTC--...)" ;;
-    en:account_note)   echo "  This step allows your NODE to SIGN BLOCKS on SatuChain." ;;
+    en:account_note)   echo "  This step allows your NODE to SIGN BLOCKS on Satuchain." ;;
     en:account_note2)  echo "  You need to enter the private key of your validator wallet." ;;
     en:account_note3)  echo "  This key is stored ENCRYPTED on YOUR server only —" ;;
-    en:account_note4)  echo "  it is NEVER sent to SatuChain servers." ;;
+    en:account_note4)  echo "  it is NEVER sent to Satuchain servers." ;;
     en:account_note5)  echo "  This is NOT the Validator Key (satu-val-...) from the previous step." ;;
     en:account_note6)  echo "  Format: 0x + 64 hex characters (export from MetaMask/your wallet)" ;;
     en:account_pk)     echo "Enter validator wallet private key (0x...):" ;;
@@ -376,10 +376,10 @@ t() {
     en:summary_logs)           echo "Monitor logs:" ;;
     en:summary_view)   echo "View on dashboard:" ;;
     en:summary_next)   echo "Next steps (automatic):" ;;
-    en:summary_s1)     echo "Node syncing with SatuChain" ;;
+    en:summary_s1)     echo "Node syncing with Satuchain" ;;
     en:summary_s2)     echo "Monitor sends status to dashboard every 5 minutes" ;;
     en:summary_s3)     echo "When synced, admin gets notified to approve your validator" ;;
-    en:summary_s4)     echo "Protection: new validators are auto-jailed on-chain until admin verifies (self-stake is SAFE, not slashed). Contact admin on SatuChain Telegram/Discord to speed up unjail." ;;
+    en:summary_s4)     echo "Protection: new validators are auto-jailed on-chain until admin verifies (self-stake is SAFE, not slashed). Contact admin on Satuchain Telegram/Discord to speed up unjail." ;;
     *)                 echo "$key $*" ;;
   esac
 }
@@ -409,7 +409,7 @@ print_banner() {
   echo "  ███████║██║  ██║   ██║   ╚██████╔╝╚██████╗██║  ██║██║  ██║██║██║ ╚████║"
   echo "  ╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝"
   echo -e "${NC}"
-  echo -e "${BOLD}  SatuChain Mainnet — Validator Node Installer v${INSTALLER_VERSION}${NC}"
+  echo -e "${BOLD}  Satuchain Mainnet — Validator Node Installer v${INSTALLER_VERSION}${NC}"
   echo -e "  Chain ID: ${CYAN}$CHAIN_ID${NC}  •  APoS Consensus  •  Docker-based"
   echo ""
   echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -629,12 +629,12 @@ validate_key() {
     || die "$(t key_invalid_fmt): address must be 0x + 40 hex chars"
 
   # ── Check requirements via API (HARD STOP if not met) ──────
-  info "Checking validator requirements on SatuChain..."
+  info "Checking validator requirements on Satuchain..."
   REQ_RESPONSE=$(curl -s --max-time 15 \
     "$API_BASE/validator-requirements/$VALIDATOR_ADDRESS" 2>/dev/null) \
-    || die "Cannot reach SatuChain API to verify requirements"
+    || die "Cannot reach Satuchain API to verify requirements"
 
-  [[ -z "$REQ_RESPONSE" ]] && die "Cannot reach SatuChain API"
+  [[ -z "$REQ_RESPONSE" ]] && die "Cannot reach Satuchain API"
 
   # Parse fields
   CAN_INSTALL=$(echo "$REQ_RESPONSE" | python3 -c \
@@ -701,13 +701,13 @@ validate_key() {
             || echo "")
   [[ "$PUBLIC_IP6" == "$PUBLIC_IP" ]] && PUBLIC_IP6=""   # ipify can return v4-mapped, ignore
 
-  info "Validating with SatuChain server..."
+  info "Validating with Satuchain server..."
   RESPONSE=$($CURL_API -s --max-time 15 -X POST "$API_BASE/validate-key" \
     -H "Content-Type: application/json" \
     -d "{\"address\":\"$VALIDATOR_ADDRESS\",\"key\":\"$VALIDATOR_KEY\",\"serverId\":\"$SERVER_ID\",\"serverIp\":\"$PUBLIC_IP\"}" \
-    2>/dev/null) || die "Cannot reach SatuChain API"
+    2>/dev/null) || die "Cannot reach Satuchain API"
 
-  [[ -z "$RESPONSE" ]] && die "Cannot reach SatuChain API"
+  [[ -z "$RESPONSE" ]] && die "Cannot reach Satuchain API"
 
   VALID=$(echo "$RESPONSE" | python3 -c \
     "import json,sys; print(json.load(sys.stdin).get('valid',False))" 2>/dev/null || echo "False")
@@ -1040,7 +1040,7 @@ setup_genesis() {
     | python3 -c "import json,sys; print(json.load(sys.stdin).get('sha256',''))" 2>/dev/null || echo "")
   if [[ -n "$REMOTE_SHA" && "$LOCAL_SHA" != "$REMOTE_SHA" ]]; then
     rm -f "$CONFIG_DIR/genesis.json"
-    die "Genesis checksum mismatch! File may be tampered. Contact SatuChain admin."
+    die "Genesis checksum mismatch! File may be tampered. Contact Satuchain admin."
   fi
 
   log "$(t genesis_ok) (chainId: $CHAIN_ID)"
@@ -1333,7 +1333,7 @@ setup_compose_and_start() {
     set -e
     if [[ $GENESIS_RC -ne 0 ]]; then
       report_status "genesis" "failed" "Genesis init failed (exit $GENESIS_RC)"
-      die "Genesis initialization failed. Output above. Contact SatuChain admin."
+      die "Genesis initialization failed. Output above. Contact Satuchain admin."
     fi
     # Fix ownership so runtime container (UID 1000) can read+write
     chown -R 1000:1000 "$DATA_DIR" 2>/dev/null || true
@@ -1535,7 +1535,7 @@ setup_monitor() {
 
   cat > "$MONITOR_SCRIPT" << 'MONITOR'
 #!/bin/bash
-# SatuChain Validator Monitor v2.3 — auto sync health to dashboard (1-min) + auto-update node image
+# Satuchain Validator Monitor v2.3 — auto sync health to dashboard (1-min) + auto-update node image
 
 INSTALL_DIR="/opt/satuchain-validator"
 STATE_FILE="$INSTALL_DIR/.state"
@@ -1743,7 +1743,7 @@ MONITOR
   if command -v systemctl >/dev/null 2>&1; then
     cat > /etc/systemd/system/satuchain-monitor.service <<UNIT
 [Unit]
-Description=SatuChain validator monitor (one-shot heartbeat)
+Description=Satuchain validator monitor (one-shot heartbeat)
 
 [Service]
 Type=oneshot
@@ -1751,7 +1751,7 @@ ExecStart=/bin/bash $MONITOR_SCRIPT
 UNIT
     cat > /etc/systemd/system/satuchain-monitor.timer <<UNIT
 [Unit]
-Description=Run SatuChain validator monitor every minute
+Description=Run Satuchain validator monitor every minute
 
 [Timer]
 OnBootSec=30s
@@ -2013,7 +2013,7 @@ BACKUP
   if command -v systemctl >/dev/null 2>&1; then
     cat > /etc/systemd/system/satuchain-backup.service <<UNIT
 [Unit]
-Description=SatuChain validator daily critical-state backup
+Description=Satuchain validator daily critical-state backup
 
 [Service]
 Type=oneshot
